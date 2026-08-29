@@ -91,6 +91,15 @@ DATABASES = {
     'default': env.db('DATABASE_URL', default=f'sqlite:///{BASE_DIR}/db.sqlite3')
 }
 
+# Caching Configuration
+# Database-backed shared cache for multi-worker Gunicorn consistency
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
+}
+
 # Custom User Model definition
 AUTH_USER_MODEL = 'users.User'
 
