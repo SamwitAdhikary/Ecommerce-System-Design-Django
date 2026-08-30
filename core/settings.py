@@ -122,6 +122,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Django REST Framework configuration
 REST_FRAMEWORK = {
+    'NUM_PROXIES': env.int('NUM_PROXIES', default=1),  # Number of reverse proxies (e.g., Nginx) in front of Gunicorn
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
