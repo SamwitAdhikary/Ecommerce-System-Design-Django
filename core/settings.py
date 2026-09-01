@@ -139,6 +139,7 @@ REST_FRAMEWORK = {
         'anon': '60/minute',
         'user': '120/minute',
         'login': '5/minute',
+        'otp_verify': '5/minute',
         'register': '5/hour',
         'sensitive': '10/minute',
     },
