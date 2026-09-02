@@ -1,6 +1,12 @@
 import secrets
 from datetime import timedelta
 from django.utils import timezone
+from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+
 from rest_framework import status, permissions, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -11,7 +17,7 @@ from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .models import User
 from .serializers import UserSerializer
-from .emails import send_otp_email
+from .emails import send_otp_email, send_password_reset_email
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
@@ -223,4 +229,87 @@ class ResendOTPView(APIView):
             return Response(
                 {'message': 'If the email exists and is unverified, a fresh verification code has been dispatched.'},
                 status=status.HTTP_200_OK
+            )
+
+
+from django.conf import settings
+
+
+class PasswordResetView(APIView):
+    """
+    Initiates cryptographic password reset.
+    Masks account existence to prevent email enumeration.
+    Builds reset URL from trusted server configuration (FRONTEND_URL) to prevent reset poisoning.
+    """
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'password_reset'  # Dedicated rate limit: 5/minute in settings.py
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'error': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        try:
+            user = User.objects.get(email=email)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            
+            # Secure: Always build reset links from trusted server settings, never from client Origin headers
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'https://yourstore.com').rstrip('/')
+            reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+            
+            send_password_reset_email(user.email, reset_url)
+        except User.DoesNotExist:
+            # Return HTTP 200 even if user does not exist to prevent email enumeration
+            pass
+            
+        return Response(
+            {'message': 'If an account with this email exists, a password reset link has been sent to your inbox.'},
+            status=status.HTTP_200_OK
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    Validates cryptographic token and updates user password with standard validators.
+    Automatically invalidates the token upon successful password update.
+    """
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'password_reset'  # Dedicated rate limit: 5/minute in settings.py
+
+    def post(self, request):
+        uidb64 = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('password')
+        
+        if not uidb64 or not token or not new_password:
+            return Response(
+                {'error': 'Missing required fields: uid, token, and password are all required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+            
+        if user is not None and default_token_generator.check_token(user, token):
+            try:
+                validate_password(new_password, user=user)
+            except DjangoValidationError as e:
+                return Response({'error': e.messages}, status=status.HTTP_400_BAD_REQUEST)
+                
+            user.set_password(new_password)
+            user.save(update_fields=['password'])
+            return Response(
+                {'message': 'Password has been reset successfully. You may now log in with your new credentials.'},
+                status=status.HTTP_200_OK
+            )
+        else:
+            return Response(
+                {'error': 'Invalid or expired password reset link.'},
+                status=status.HTTP_400_BAD_REQUEST
             )

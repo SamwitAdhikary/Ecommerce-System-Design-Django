@@ -140,10 +140,14 @@ REST_FRAMEWORK = {
         'user': '120/minute',
         'login': '5/minute',
         'otp_verify': '5/minute',
+        'password_reset': '5/minute',  # Dedicated rate limit for password resets
         'register': '5/hour',
         'sensitive': '10/minute',
     },
 }
+
+# Frontend Storefront URL (Used for Password Reset and Transactional Emails)
+FRONTEND_URL = env('FRONTEND_URL', default='https://yourstore.com')
 
 # JWT Token Settings
 from datetime import timedelta

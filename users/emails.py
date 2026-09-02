@@ -39,3 +39,11 @@ def send_otp_email(email, otp):
     subject = "Verify Your Email Address - YourStore"
     html_content = render_to_string('emails/otp_verification.html', {'otp': otp})
     send_email_async(subject, html_content, email)
+
+def send_password_reset_email(email, reset_url):
+    """
+    Renders the Password Reset HTML template and dispatches asynchronously.
+    """
+    subject = "Reset Your Password - YourStore"
+    html_content = render_to_string('emails/password_reset.html', {'reset_url': reset_url})
+    send_email_async(subject, html_content, email)
