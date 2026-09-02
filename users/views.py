@@ -1,5 +1,7 @@
 import secrets
 from datetime import timedelta
+from django.conf import settings
+from django.db import transaction, IntegrityError
 from django.utils import timezone
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth.password_validation import validate_password
@@ -15,8 +17,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
-from .models import User
-from .serializers import UserSerializer
+from .models import User, Address
+from .serializers import UserSerializer, AddressSerializer
 from .emails import send_otp_email, send_password_reset_email
 
 
@@ -232,9 +234,6 @@ class ResendOTPView(APIView):
             )
 
 
-from django.conf import settings
-
-
 class PasswordResetView(APIView):
     """
     Initiates cryptographic password reset.
@@ -313,3 +312,154 @@ class PasswordResetConfirmView(APIView):
                 {'error': 'Invalid or expired password reset link.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class AddressViewSet(viewsets.ModelViewSet):
+    """
+    Customer shipping address management viewset.
+    Enforces user isolation, atomic default toggling, duplicate prevention,
+    nested savepoint error handling, and delete auto-promotion.
+    """
+    queryset = Address.objects.all()
+    serializer_class = AddressSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """Restricts addresses strictly to the authenticated customer (IDOR defense)."""
+        return self.queryset.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        """
+        Creates a new shipping address:
+        1. Checks for existing identical addresses to update phone/email and avoid duplicates.
+        2. Enforces single is_default selection logic across all user addresses atomically.
+        3. Uses nested savepoints to gracefully recover from concurrent constraint races.
+        """
+        data = serializer.validated_data
+        user = self.request.user
+
+        with transaction.atomic():
+            # Check for existing identical physical address
+            existing_address = Address.objects.filter(
+                user=user,
+                first_name=data.get('first_name'),
+                last_name=data.get('last_name'),
+                address_line=data.get('address_line'),
+                city=data.get('city'),
+                state=data.get('state'),
+                pincode=data.get('pincode')
+            ).first()
+
+            if existing_address:
+                # Update contact details on the existing record if newly provided
+                update_fields = []
+                if data.get('phone') and existing_address.phone != data.get('phone'):
+                    existing_address.phone = data.get('phone')
+                    update_fields.append('phone')
+                if data.get('email') and existing_address.email != data.get('email'):
+                    existing_address.email = data.get('email')
+                    update_fields.append('email')
+
+                if data.get('is_default'):
+                    Address.objects.filter(user=user).update(is_default=False)
+                    existing_address.is_default = True
+                    update_fields.append('is_default')
+
+                if update_fields:
+                    existing_address.save(update_fields=update_fields)
+
+                serializer.instance = existing_address
+                return
+
+            # If it is the user's first address, automatically make it the default
+            is_first_address = not Address.objects.filter(user=user).exists()
+            is_default = data.get('is_default', False) or is_first_address
+
+            if is_default:
+                Address.objects.filter(user=user).update(is_default=False)
+
+            # Use a nested savepoint to isolate race condition collisions
+            try:
+                with transaction.atomic():
+                    serializer.save(user=user, is_default=is_default)
+            except IntegrityError:
+                # Determine which constraint fired by checking if a physical duplicate exists
+                duplicate_address = Address.objects.filter(
+                    user=user,
+                    first_name=data.get('first_name'),
+                    last_name=data.get('last_name'),
+                    address_line=data.get('address_line'),
+                    city=data.get('city'),
+                    state=data.get('state'),
+                    pincode=data.get('pincode')
+                ).first()
+
+                if duplicate_address:
+                    # Case A: Identical duplicate race (unique_address_per_user fired)
+                    # Reuse the winning duplicate row, promoting to default if requested
+                    if data.get('is_default'):
+                        with transaction.atomic():
+                            Address.objects.filter(user=user).update(is_default=False)
+                            duplicate_address.is_default = True
+                            duplicate_address.save(update_fields=['is_default'])
+                    serializer.instance = duplicate_address
+                else:
+                    # Case B: Default-slot race (unique_default_address_per_user fired)
+                    # This is a genuinely distinct address that lost the is_default race.
+                    # Save it as non-default so zero customer data is lost.
+                    with transaction.atomic():
+                        serializer.save(user=user, is_default=False)
+
+    def perform_update(self, serializer):
+        """
+        Updates an existing address, ensuring is_default atomicity and preventing
+        a user from leaving their account with zero default addresses.
+        """
+        user = self.request.user
+        data = serializer.validated_data
+        instance = serializer.instance
+
+        with transaction.atomic():
+            # Prevent explicitly un-setting is_default on an active default address
+            if instance.is_default and 'is_default' in data and not data['is_default']:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({
+                    "is_default": "A default shipping address cannot be unset directly. Please mark another address as default instead."
+                })
+
+            if data.get('is_default'):
+                Address.objects.filter(user=user).exclude(pk=instance.pk).update(is_default=False)
+
+            serializer.save()
+
+    def perform_destroy(self, instance):
+        """
+        Deletes an address. If the deleted address was the primary default,
+        automatically promotes the next remaining address to maintain the default invariant.
+        """
+        user = self.request.user
+        was_default = instance.is_default
+
+        with transaction.atomic():
+            instance.delete()
+            if was_default:
+                remaining_address = Address.objects.filter(user=user).first()
+                if remaining_address:
+                    remaining_address.is_default = True
+                    remaining_address.save(update_fields=['is_default'])
+
+    @action(detail=True, methods=['post'], url_path='set-default')
+    def set_default(self, request, pk=None):
+        """
+        Atomic endpoint to set the selected address as the primary default address.
+        """
+        address = self.get_object()
+        with transaction.atomic():
+            Address.objects.filter(user=request.user).update(is_default=False)
+            address.is_default = True
+            address.save(update_fields=['is_default'])
+
+        serializer = self.get_serializer(address)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+

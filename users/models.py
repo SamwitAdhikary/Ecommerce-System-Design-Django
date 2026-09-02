@@ -49,3 +49,43 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.email
+
+
+class Address(models.Model):
+    """
+    Customer shipping address model supporting multiple records per user
+    with database-enforced single-default and deduplication constraints.
+    """
+    user = models.ForeignKey(User, related_name='addresses', on_delete=models.CASCADE)
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    address_line = models.TextField()
+    city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=10)
+    phone = models.CharField(max_length=20, blank=True, null=True)
+    email = models.EmailField(blank=True, null=True)
+    is_default = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name_plural = "Addresses"
+        ordering = ['-is_default', '-id']
+        indexes = [
+            models.Index(fields=['user', 'is_default']),
+        ]
+        constraints = [
+            # Partial unique constraint: Exactly ONE address can have is_default=True per user
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=models.Q(is_default=True),
+                name='unique_default_address_per_user'
+            ),
+            # Prevents duplicate identical address entries for the same user
+            models.UniqueConstraint(
+                fields=['user', 'first_name', 'last_name', 'address_line', 'city', 'state', 'pincode'],
+                name='unique_address_per_user'
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} - {self.city}, {self.pincode}"

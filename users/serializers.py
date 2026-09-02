@@ -1,13 +1,38 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import User
+from .models import User, Address
+
+
+class AddressSerializer(serializers.ModelSerializer):
+    """
+    Serializer for customer shipping addresses.
+    User is automatically attached from request context.
+    """
+    class Meta:
+        model = Address
+        fields = (
+            'id',
+            'user',
+            'first_name',
+            'last_name',
+            'address_line',
+            'city',
+            'state',
+            'pincode',
+            'phone',
+            'email',
+            'is_default',
+        )
+        read_only_fields = ('user',)
+
 
 class UserSerializer(serializers.ModelSerializer):
     """
-    Serializer for User model with registration validation, inactive locking,
-    and secure password hashing during profile updates.
+    Serializer for User model with nested shipping addresses,
+    registration validation, and secure password hashing.
     """
+    addresses = AddressSerializer(many=True, read_only=True)
     password = serializers.CharField(write_only=True)
 
     class Meta:
@@ -19,6 +44,7 @@ class UserSerializer(serializers.ModelSerializer):
             'first_name', 
             'last_name', 
             'phone_number', 
+            'addresses',
             'wallet_balance', 
             'is_staff', 
             'is_active', 

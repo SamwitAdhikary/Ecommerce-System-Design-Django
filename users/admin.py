@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from unfold.admin import ModelAdmin
-from .models import User
+from .models import User, Address
 
 class CustomUserCreationForm(UserCreationForm):
     """
@@ -62,3 +62,9 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
             'fields': ('email', 'password1', 'password2'),
         }),
     )
+
+@admin.register(Address)
+class AddressAdmin(ModelAdmin):
+    list_display = ('user', 'city', 'state', 'pincode', 'is_default')
+    list_filter = ('city', 'state', 'is_default')
+    search_fields = ('user__email', 'address_line', 'city', 'pincode')
