@@ -125,7 +125,7 @@ class WalletTransaction(models.Model):
             raise ValidationError({'amount': 'Transaction amount must be strictly greater than zero.'})
 
         if self.transaction_type == 'DEBIT' and self.user_id:
-            # Overdraft protection: verify user has sufficient funds before allowing debit
+            # Fast UX validation check (for admin forms and early user feedback)
             current_balance = User.objects.filter(pk=self.user_id).values_list('wallet_balance', flat=True).first() or Decimal('0.00')
             if current_balance < self.amount:
                 raise ValidationError({'amount': f'Insufficient wallet balance. Available: ₹{current_balance}, Requested: ₹{self.amount}'})
@@ -139,11 +139,20 @@ class WalletTransaction(models.Model):
             with transaction.atomic():
                 super().save(*args, **kwargs)
 
-                # Atomic F() expression update at the database level to prevent lost updates
+                # Atomic conditional SQL delta updates (eliminates race conditions and overdrafts)
                 if self.transaction_type == 'CREDIT':
                     User.objects.filter(pk=self.user_id).update(wallet_balance=F('wallet_balance') + self.amount)
                 elif self.transaction_type == 'DEBIT':
-                    User.objects.filter(pk=self.user_id).update(wallet_balance=F('wallet_balance') - self.amount)
+                    # Single atomic SQL statement enforcing balance sufficiency directly in the WHERE clause
+                    updated = User.objects.filter(
+                        pk=self.user_id,
+                        wallet_balance__gte=self.amount
+                    ).update(wallet_balance=F('wallet_balance') - self.amount)
+
+                    if updated == 0:
+                        raise ValidationError({
+                            'amount': f'Insufficient wallet balance for debit of ₹{self.amount}.'
+                        })
 
                 # Sync the in-memory user instance
                 if hasattr(self, 'user') and self.user:
