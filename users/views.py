@@ -17,8 +17,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
-from .models import User, Address
-from .serializers import UserSerializer, AddressSerializer
+from .models import User, Address, WalletTransaction
+from .serializers import UserSerializer, AddressSerializer, WalletTransactionSerializer
 from .emails import send_otp_email, send_password_reset_email
 
 
@@ -461,5 +461,20 @@ class AddressViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(address)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class WalletTransactionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only financial ledger history for the authenticated customer.
+    Enforces user isolation, chronological ordering, and prevents mutations.
+    """
+    queryset = WalletTransaction.objects.all()
+    serializer_class = WalletTransactionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """Restricts transaction history strictly to the authenticated customer."""
+        return self.queryset.filter(user=self.request.user).order_by('-created_at')
+
 
 

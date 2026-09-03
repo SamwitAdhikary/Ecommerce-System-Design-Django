@@ -8,6 +8,7 @@ from .views import (
     SecurityProbeView,
     UserViewSet,
     AddressViewSet,
+    WalletTransactionViewSet,
     VerifyOTPView,
     ResendOTPView,
     PasswordResetView,
@@ -17,9 +18,10 @@ from .views import (
 router = DefaultRouter()
 router.register(r'profile', UserViewSet, basename='profile')
 router.register(r'addresses', AddressViewSet, basename='addresses')
+router.register(r'wallet_transactions', WalletTransactionViewSet, basename='wallet_transactions')
 
 urlpatterns = [
-    # Router endpoints (e.g. /api/users/profile/me/, /api/users/addresses/, /api/users/addresses/{id}/set-default/)
+    # Router endpoints (e.g. /api/users/profile/me/, /api/users/addresses/, /api/users/wallet_transactions/)
     path('', include(router.urls)),
     
     # Registration & OTP Verification

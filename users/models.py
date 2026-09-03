@@ -1,4 +1,7 @@
-from django.db import models
+from decimal import Decimal
+from django.db import models, transaction
+from django.db.models import F
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 
 class UserManager(BaseUserManager):
@@ -35,7 +38,7 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     phone_number = models.CharField(max_length=15, blank=True, null=True)
     google_id = models.CharField(max_length=255, blank=True, null=True)
-    wallet_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    wallet_balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     otp_code = models.CharField(max_length=6, blank=True, null=True)
     otp_expires_at = models.DateTimeField(blank=True, null=True)
     
@@ -89,3 +92,62 @@ class Address(models.Model):
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.city}, {self.pincode}"
+
+
+class WalletTransaction(models.Model):
+    """
+    Append-only double-entry financial ledger recording all credit additions
+    and debit deductions for customer store credit.
+    """
+    TRANSACTION_TYPE_CHOICES = (
+        ('CREDIT', 'Credit (Added to Wallet)'),
+        ('DEBIT', 'Debit (Deducted from Wallet)'),
+    )
+    user = models.ForeignKey(User, related_name='wallet_transactions', on_delete=models.CASCADE)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPE_CHOICES)
+    description = models.CharField(max_length=255)
+    order_id = models.CharField(max_length=100, blank=True, null=True, help_text="Associated Order ID if applicable")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'transaction_type']),
+        ]
+
+    def __str__(self):
+        return f"{self.transaction_type} of ₹{self.amount} for {self.user.email}"
+
+    def clean(self):
+        if self.amount is not None and self.amount <= Decimal('0.00'):
+            raise ValidationError({'amount': 'Transaction amount must be strictly greater than zero.'})
+
+        if self.transaction_type == 'DEBIT' and self.user_id:
+            # Overdraft protection: verify user has sufficient funds before allowing debit
+            current_balance = User.objects.filter(pk=self.user_id).values_list('wallet_balance', flat=True).first() or Decimal('0.00')
+            if current_balance < self.amount:
+                raise ValidationError({'amount': f'Insufficient wallet balance. Available: ₹{current_balance}, Requested: ₹{self.amount}'})
+
+    def save(self, *args, **kwargs):
+        is_new = not self.pk
+
+        if is_new:
+            self.full_clean()
+
+            with transaction.atomic():
+                super().save(*args, **kwargs)
+
+                # Atomic F() expression update at the database level to prevent lost updates
+                if self.transaction_type == 'CREDIT':
+                    User.objects.filter(pk=self.user_id).update(wallet_balance=F('wallet_balance') + self.amount)
+                elif self.transaction_type == 'DEBIT':
+                    User.objects.filter(pk=self.user_id).update(wallet_balance=F('wallet_balance') - self.amount)
+
+                # Sync the in-memory user instance
+                if hasattr(self, 'user') and self.user:
+                    self.user.refresh_from_db(fields=['wallet_balance'])
+        else:
+            # Ledger records are append-only and immutable
+            super().save(*args, **kwargs)

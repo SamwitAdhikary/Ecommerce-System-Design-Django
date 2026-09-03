@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
-from .models import User, Address
+from .models import User, Address, WalletTransaction
 
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -27,10 +27,37 @@ class AddressSerializer(serializers.ModelSerializer):
         read_only_fields = ('user',)
 
 
+class WalletTransactionSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for customer financial ledger transactions.
+    Exposes immutable credit and debit history.
+    """
+    class Meta:
+        model = WalletTransaction
+        fields = (
+            'id',
+            'user',
+            'amount',
+            'transaction_type',
+            'description',
+            'order_id',
+            'created_at',
+        )
+        read_only_fields = (
+            'id',
+            'user',
+            'amount',
+            'transaction_type',
+            'description',
+            'order_id',
+            'created_at',
+        )
+
+
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for User model with nested shipping addresses,
-    registration validation, and secure password hashing.
+    wallet balance, registration validation, and secure password hashing.
     """
     addresses = AddressSerializer(many=True, read_only=True)
     password = serializers.CharField(write_only=True)
