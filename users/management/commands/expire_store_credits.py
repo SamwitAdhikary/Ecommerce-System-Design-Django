@@ -42,7 +42,7 @@ class Command(BaseCommand):
             total_amount = sum((txn.remaining_amount for txn in query), Decimal('0.00'))
             self.stdout.write(
                 self.style.WARNING(
-                    f"[DRY-RUN] Found {count} expired credit grants totaling ${total_amount} across matching wallets."
+                    f"[DRY-RUN] Found {count} expired credit grants totaling ₹{total_amount} across matching wallets."
                 )
             )
             return
@@ -54,7 +54,7 @@ class Command(BaseCommand):
                 total_expired = sum((d.amount for d in debits), Decimal('0.00'))
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f"Successfully expired {len(debits)} credit grants totaling ${total_expired} for user {user.email}."
+                        f"Successfully expired {len(debits)} credit grants totaling ₹{total_expired} for user {user.email}."
                     )
                 )
             except User.DoesNotExist:

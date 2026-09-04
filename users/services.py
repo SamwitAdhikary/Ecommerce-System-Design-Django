@@ -1,9 +1,12 @@
+import logging
 from decimal import Decimal
 from typing import List, Optional
 from django.db import transaction, models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from .models import User, WalletTransaction
+
+logger = logging.getLogger(__name__)
 
 
 @transaction.atomic
@@ -41,7 +44,7 @@ def process_wallet_debit(
     total_available = sum((txn.remaining_amount for txn in active_credits), Decimal('0.00'))
     if total_available < amount:
         raise ValidationError({
-            'amount': f'Insufficient active wallet balance. Available unexpired: ${total_available}, Requested: ${amount}'
+            'amount': f'Insufficient active wallet balance. Available unexpired: ₹{total_available}, Requested: ₹{amount}'
         })
     
     # Consume from active credit buckets in FIFO order
@@ -126,7 +129,7 @@ def expire_all_pending_credits() -> int:
             debits = expire_user_credits(user)
             processed_count += len(debits)
         except Exception:
-            # Continue processing remaining users even if one encounters an issue
+            logger.exception(f"Failed to expire credits for user_id={user_id}")
             continue
             
     return processed_count

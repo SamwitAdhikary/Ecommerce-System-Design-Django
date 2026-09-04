@@ -127,14 +127,20 @@ class WalletTransaction(models.Model):
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['user', 'transaction_type']),
+            # Per-user checkout FIFO index (leads with user_id)
             models.Index(
                 fields=['user', 'transaction_type', 'remaining_amount', 'expires_at'],
-                name='idx_wallet_txn_fifo'
+                name='idx_wallet_txn_user_fifo'
+            ),
+            # Global background expiration cron index (leads with transaction_type & expires_at)
+            models.Index(
+                fields=['transaction_type', 'expires_at', 'remaining_amount'],
+                name='idx_wallet_txn_global_exp'
             ),
         ]
 
     def __str__(self):
-        return f"{self.transaction_type} of ${self.amount} for {self.user.email}"
+        return f"{self.transaction_type} of ₹{self.amount} for {self.user.email}"
 
     def clean(self):
         if self.amount is not None and self.amount <= Decimal('0.00'):
@@ -144,7 +150,7 @@ class WalletTransaction(models.Model):
             # Fast UX validation check (for admin forms and early user feedback)
             current_balance = User.objects.filter(pk=self.user_id).values_list('wallet_balance', flat=True).first() or Decimal('0.00')
             if current_balance < self.amount:
-                raise ValidationError({'amount': f'Insufficient wallet balance. Available: ${current_balance}, Requested: ${self.amount}'})
+                raise ValidationError({'amount': f'Insufficient wallet balance. Available: ₹{current_balance}, Requested: ₹{self.amount}'})
 
     def save(self, *args, **kwargs):
         is_new = not self.pk
@@ -173,7 +179,7 @@ class WalletTransaction(models.Model):
 
                     if updated == 0:
                         raise ValidationError({
-                            'amount': f'Insufficient wallet balance for debit of ${self.amount}.'
+                            'amount': f'Insufficient wallet balance for debit of ₹{self.amount}.'
                         })
 
                 # Sync the in-memory user instance
