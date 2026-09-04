@@ -30,8 +30,11 @@ class AddressSerializer(serializers.ModelSerializer):
 class WalletTransactionSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for customer financial ledger transactions.
-    Exposes immutable credit and debit history.
+    Exposes immutable credit and debit history, expiration metadata, and remaining balances.
     """
+    is_expired = serializers.SerializerMethodField()
+    days_remaining = serializers.SerializerMethodField()
+
     class Meta:
         model = WalletTransaction
         fields = (
@@ -42,6 +45,10 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'description',
             'order_id',
             'created_at',
+            'expires_at',
+            'remaining_amount',
+            'is_expired',
+            'days_remaining',
         )
         read_only_fields = (
             'id',
@@ -51,7 +58,27 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             'description',
             'order_id',
             'created_at',
+            'expires_at',
+            'remaining_amount',
+            'is_expired',
+            'days_remaining',
         )
+
+    def get_is_expired(self, obj):
+        if obj.transaction_type != 'CREDIT' or not obj.expires_at:
+            return False
+        from django.utils import timezone
+        return obj.expires_at <= timezone.now()
+
+    def get_days_remaining(self, obj):
+        if obj.transaction_type != 'CREDIT' or not obj.expires_at:
+            return None
+        from django.utils import timezone
+        now = timezone.now()
+        if obj.expires_at <= now:
+            return 0
+        diff = obj.expires_at - now
+        return diff.days
 
 
 class UserSerializer(serializers.ModelSerializer):

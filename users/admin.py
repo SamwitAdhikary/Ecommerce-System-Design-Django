@@ -31,7 +31,7 @@ class WalletTransactionInline(TabularInline):
     """
     model = WalletTransaction
     extra = 1
-    readonly_fields = ("order_id", "created_at")
+    readonly_fields = ("order_id", "remaining_amount", "created_at")
     can_delete = False
     
     def has_change_permission(self, request, obj=None):
@@ -92,11 +92,11 @@ class AddressAdmin(ModelAdmin):
 
 @admin.register(WalletTransaction)
 class WalletTransactionAdmin(ModelAdmin):
-    list_display = ("user", "transaction_type", "amount", "order_id", "created_at")
-    list_filter = ("transaction_type", "created_at")
+    list_display = ("user", "transaction_type", "amount", "remaining_amount", "expires_at", "order_id", "created_at")
+    list_filter = ("transaction_type", "expires_at", "created_at")
     search_fields = ("user__email", "order_id", "description")
 
     def get_readonly_fields(self, request, obj=None):
         if obj:  # Editing an existing transaction is locked for audit integrity
-            return ("user", "amount", "transaction_type", "order_id", "created_at")
+            return ("user", "amount", "transaction_type", "order_id", "created_at", "expires_at", "remaining_amount")
         return ()

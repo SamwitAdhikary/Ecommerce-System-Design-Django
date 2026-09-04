@@ -97,7 +97,8 @@ class Address(models.Model):
 class WalletTransaction(models.Model):
     """
     Append-only double-entry financial ledger recording all credit additions
-    and debit deductions for customer store credit.
+    and debit deductions for customer store credit, supporting expiration
+    schedules and FIFO bucket tracking.
     """
     TRANSACTION_TYPE_CHOICES = (
         ('CREDIT', 'Credit (Added to Wallet)'),
@@ -109,16 +110,31 @@ class WalletTransaction(models.Model):
     description = models.CharField(max_length=255)
     order_id = models.CharField(max_length=100, blank=True, null=True, help_text="Associated Order ID if applicable")
     created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Date and time when this credit expires. None means perpetual (never expires)."
+    )
+    remaining_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Remaining unused balance of this credit grant."
+    )
 
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', '-created_at']),
             models.Index(fields=['user', 'transaction_type']),
+            models.Index(
+                fields=['user', 'transaction_type', 'remaining_amount', 'expires_at'],
+                name='idx_wallet_txn_fifo'
+            ),
         ]
 
     def __str__(self):
-        return f"{self.transaction_type} of ₹{self.amount} for {self.user.email}"
+        return f"{self.transaction_type} of ${self.amount} for {self.user.email}"
 
     def clean(self):
         if self.amount is not None and self.amount <= Decimal('0.00'):
@@ -128,12 +144,18 @@ class WalletTransaction(models.Model):
             # Fast UX validation check (for admin forms and early user feedback)
             current_balance = User.objects.filter(pk=self.user_id).values_list('wallet_balance', flat=True).first() or Decimal('0.00')
             if current_balance < self.amount:
-                raise ValidationError({'amount': f'Insufficient wallet balance. Available: ₹{current_balance}, Requested: ₹{self.amount}'})
+                raise ValidationError({'amount': f'Insufficient wallet balance. Available: ${current_balance}, Requested: ${self.amount}'})
 
     def save(self, *args, **kwargs):
         is_new = not self.pk
 
         if is_new:
+            # Initialize credit remaining bucket if not explicitly provided
+            if self.transaction_type == 'CREDIT' and (self.remaining_amount is None or self.remaining_amount == Decimal('0.00')):
+                self.remaining_amount = self.amount
+            elif self.transaction_type == 'DEBIT':
+                self.remaining_amount = Decimal('0.00')
+
             self.full_clean()
 
             with transaction.atomic():
@@ -151,12 +173,12 @@ class WalletTransaction(models.Model):
 
                     if updated == 0:
                         raise ValidationError({
-                            'amount': f'Insufficient wallet balance for debit of ₹{self.amount}.'
+                            'amount': f'Insufficient wallet balance for debit of ${self.amount}.'
                         })
 
                 # Sync the in-memory user instance
                 if hasattr(self, 'user') and self.user:
                     self.user.refresh_from_db(fields=['wallet_balance'])
         else:
-            # Ledger records are append-only and immutable
+            # Ledger records are append-only and immutable (only remaining_amount can be updated via service)
             super().save(*args, **kwargs)
