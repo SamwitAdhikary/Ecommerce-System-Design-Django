@@ -18,7 +18,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .models import User, Address, WalletTransaction
-from .serializers import UserSerializer, AddressSerializer, WalletTransactionSerializer
+from .serializers import UserSerializer, AddressSerializer, WalletTransactionSerializer, WalletDebitRequestSerializer
+from .services import process_wallet_debit
 from .emails import send_otp_email, send_password_reset_email
 
 
@@ -467,6 +468,7 @@ class WalletTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Read-only financial ledger history for the authenticated customer.
     Enforces user isolation, chronological ordering, and prevents mutations.
+    Provides concurrency-hardened store credit checkout debit endpoint.
     """
     queryset = WalletTransaction.objects.all()
     serializer_class = WalletTransactionSerializer
@@ -475,6 +477,36 @@ class WalletTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Restricts transaction history strictly to the authenticated customer."""
         return self.queryset.filter(user=self.request.user).order_by('-created_at')
+
+    @action(detail=False, methods=['post'], url_path='debit')
+    def debit(self, request):
+        """
+        Protected, concurrency-safe store credit deduction endpoint for checkout.
+        Applies pessimistic row locking via process_wallet_debit() to prevent double-spending.
+        """
+        serializer = WalletDebitRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        amount = serializer.validated_data['amount']
+        description = serializer.validated_data.get('description', 'Store credit checkout deduction')
+        order_id = serializer.validated_data.get('order_id')
+        
+        try:
+            debit_txn = process_wallet_debit(
+                user=request.user,
+                amount=amount,
+                description=description,
+                order_id=order_id
+            )
+            return Response(
+                WalletTransactionSerializer(debit_txn).data,
+                status=status.HTTP_201_CREATED
+            )
+        except DjangoValidationError as e:
+            return Response(
+                e.message_dict if hasattr(e, 'message_dict') else {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 

@@ -90,6 +90,8 @@ WSGI_APPLICATION = 'core.wsgi.application'
 DATABASES = {
     'default': env.db('DATABASE_URL', default=f'sqlite:///{BASE_DIR}/db.sqlite3')
 }
+if 'sqlite' in DATABASES['default']['ENGINE']:
+    DATABASES['default']['OPTIONS'] = {'timeout': 30}
 
 # Caching Configuration
 # Database-backed shared cache for multi-worker Gunicorn consistency

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -79,6 +80,16 @@ class WalletTransactionSerializer(serializers.ModelSerializer):
             return 0
         diff = obj.expires_at - now
         return diff.days
+
+
+class WalletDebitRequestSerializer(serializers.Serializer):
+    """
+    Request payload serializer for store credit checkout debit operations.
+    Enforces positive numeric amounts and optional transaction metadata.
+    """
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    description = serializers.CharField(max_length=255, required=False, default='Store credit checkout deduction')
+    order_id = serializers.CharField(max_length=100, required=False, allow_null=True, allow_blank=True)
 
 
 class UserSerializer(serializers.ModelSerializer):
