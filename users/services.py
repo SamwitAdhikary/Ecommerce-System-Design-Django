@@ -111,7 +111,7 @@ def expire_user_credits(user: User) -> List[WalletTransaction]:
 
 def expire_all_pending_credits() -> int:
     """
-    Batch expiration runner for periodic background cron / Celery jobs.
+    Batch expiration runner for periodic background cron jobs.
     Scans for any expired credits across all users and executes expiration logic.
     Returns total count of expired transaction batches processed.
     """
@@ -133,3 +133,52 @@ def expire_all_pending_credits() -> int:
             continue
             
     return processed_count
+
+
+@transaction.atomic
+def transfer_store_credit(
+    sender: User,
+    recipient: User,
+    amount: Decimal,
+    description: Optional[str] = None
+) -> tuple[WalletTransaction, WalletTransaction]:
+    """
+    Transfers store credit from a sender to a recipient in a single atomic transaction.
+    Applies deterministic primary key lock ordering (min(id1, id2) then max(id1, id2))
+    to eliminate deadlock hazards under bidirectional parallel transfers.
+    
+    1. Consumes sender's active credits via FIFO.
+    2. Logs DEBIT on sender ledger.
+    3. Logs CREDIT on recipient ledger (non-expiring peer credit).
+    """
+    if sender.pk == recipient.pk:
+        raise ValidationError({'recipient': 'Cannot transfer store credit to your own account.'})
+
+    if amount is None or amount <= Decimal('0.00'):
+        raise ValidationError({'amount': 'Transfer amount must be strictly greater than zero.'})
+
+    # Deterministic lock ordering: Always lock lower user ID first to prevent deadlocks
+    first_id, second_id = sorted([sender.pk, recipient.pk])
+    User.objects.select_for_update().get(pk=first_id)
+    User.objects.select_for_update().get(pk=second_id)
+
+    # 1. Process FIFO debit from sender
+    debit_desc = description or f"Store credit transfer to {recipient.email}"
+    debit_txn = process_wallet_debit(
+        user=sender,
+        amount=amount,
+        description=debit_desc
+    )
+
+    # 2. Grant credit to recipient (perpetual peer transfer)
+    credit_desc = f"Store credit received from {sender.email}"
+    credit_txn = WalletTransaction.objects.create(
+        user=recipient,
+        amount=amount,
+        transaction_type='CREDIT',
+        description=credit_desc,
+        expires_at=None,
+        remaining_amount=amount
+    )
+
+    return debit_txn, credit_txn

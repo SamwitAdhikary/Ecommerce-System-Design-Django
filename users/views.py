@@ -18,8 +18,14 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from .models import User, Address, WalletTransaction
-from .serializers import UserSerializer, AddressSerializer, WalletTransactionSerializer, WalletDebitRequestSerializer
-from .services import process_wallet_debit
+from .serializers import (
+    UserSerializer, 
+    AddressSerializer, 
+    WalletTransactionSerializer, 
+    WalletDebitRequestSerializer,
+    WalletTransferRequestSerializer
+)
+from .services import process_wallet_debit, transfer_store_credit
 from .emails import send_otp_email, send_password_reset_email
 
 
@@ -501,6 +507,42 @@ class WalletTransactionViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(
                 WalletTransactionSerializer(debit_txn).data,
                 status=status.HTTP_201_CREATED
+            )
+        except DjangoValidationError as e:
+            return Response(
+                e.message_dict if hasattr(e, 'message_dict') else {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=False, methods=['post'], url_path='transfer')
+    def transfer(self, request):
+        """
+        Concurrency-safe peer-to-peer store credit transfer endpoint.
+        Applies deterministic primary key ordering to lock sender and recipient,
+        preventing deadlocks under concurrent bidirectional transfers.
+        """
+        serializer = WalletTransferRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        recipient_email = serializer.validated_data['recipient_email']
+        amount = serializer.validated_data['amount']
+        description = serializer.validated_data.get('description')
+
+        recipient = User.objects.get(email=recipient_email)
+
+        try:
+            debit_txn, credit_txn = transfer_store_credit(
+                sender=request.user,
+                recipient=recipient,
+                amount=amount,
+                description=description
+            )
+            return Response(
+                {
+                    'message': f'Successfully transferred ₹{amount} to {recipient_email}.',
+                    'debit_transaction': WalletTransactionSerializer(debit_txn).data
+                },
+                status=status.HTTP_200_OK
             )
         except DjangoValidationError as e:
             return Response(

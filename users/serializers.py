@@ -92,6 +92,22 @@ class WalletDebitRequestSerializer(serializers.Serializer):
     order_id = serializers.CharField(max_length=100, required=False, allow_null=True, allow_blank=True)
 
 
+class WalletTransferRequestSerializer(serializers.Serializer):
+    """
+    Request payload serializer for peer-to-peer store credit transfers.
+    Enforces recipient existence, positive numeric amounts, and self-transfer defense.
+    """
+    recipient_email = serializers.EmailField()
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.01'))
+    description = serializers.CharField(max_length=255, required=False, default='')
+
+    def validate_recipient_email(self, value):
+        from .models import User
+        if not User.objects.filter(email=value, is_active=True).exists():
+            raise serializers.ValidationError("Active recipient account with this email does not exist.")
+        return value
+
+
 class UserSerializer(serializers.ModelSerializer):
     """
     Serializer for User model with nested shipping addresses,
