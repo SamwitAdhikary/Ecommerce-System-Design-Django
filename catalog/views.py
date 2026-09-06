@@ -41,9 +41,11 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     def homepage(self, request):
         """
         Returns curated category cards for the storefront landing page.
+        Optimized with select_related to eliminate N+1 queries during breadcrumb computation.
         """
         homepage_categories = (
             Category.objects.filter(show_on_homepage=True)
+            .select_related('parent__parent')
             .order_by('homepage_order', 'name')
         )
 
