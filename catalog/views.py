@@ -10,7 +10,7 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     Public catalog category viewset.
     Provides flat listings, slug-based lookups, and optimized hierarchical trees.
     """
-    queryset = Category.objects.all().select_related('parent')
+    queryset = Category.objects.all().select_related('parent__parent')
     serializer_class = CategorySerializer
     lookup_field = 'slug'
     permission_classes = [permissions.AllowAny]
@@ -22,14 +22,13 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     def header_menu(self, request):
         """
         Returns top-level navigation categories with nested subcategories.
-        Optimized with prefetch_related to eliminate N+1 database queries.
+        Optimized with prefetch_related across all levels to eliminate N+1 queries.
         """
-        root_categories = Category.objects.filter(
-            parent__isnull=True,
-            show_in_header=True
-        ).prefetch_related(
-            'subcategories__subcategories'
-        ).order_by('header_order', 'name')
+        root_categories = (
+            Category.objects.filter(parent__isnull=True, show_in_header=True)
+            .prefetch_related('subcategories__subcategories__subcategories')
+            .order_by('header_order', 'name')
+        )
 
         serializer = CategoryTreeSerializer(
             root_categories,
@@ -43,9 +42,10 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Returns curated category cards for the storefront landing page.
         """
-        homepage_categories = Category.objects.filter(
-            show_on_homepage=True
-        ).order_by('homepage_order', 'name')
+        homepage_categories = (
+            Category.objects.filter(show_on_homepage=True)
+            .order_by('homepage_order', 'name')
+        )
 
         serializer = CategorySerializer(
             homepage_categories,
@@ -59,11 +59,11 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
         """
         Returns the entire catalog category hierarchy as a recursive tree.
         """
-        root_categories = Category.objects.filter(
-            parent__isnull=True
-        ).prefetch_related(
-            'subcategories__subcategories'
-        ).order_by('header_order', 'name')
+        root_categories = (
+            Category.objects.filter(parent__isnull=True)
+            .prefetch_related('subcategories__subcategories__subcategories')
+            .order_by('header_order', 'name')
+        )
 
         serializer = CategoryTreeSerializer(
             root_categories,

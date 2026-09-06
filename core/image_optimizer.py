@@ -1,32 +1,39 @@
 import os
 import io
+import logging
 from PIL import Image, ImageOps
 from django.core.files.uploadedfile import UploadedFile, InMemoryUploadedFile
+
+logger = logging.getLogger(__name__)
 
 
 def compress_image(image_field, max_width=1200, quality=80):
     """
     Compresses and resizes an uploaded image before saving it to disk/cloud storage.
-    - Preserves EXIF orientation (e.g., photos from mobile devices).
+    - Preserves EXIF orientation (e.g., photos taken from mobile devices).
     - Proportionally resizes images exceeding max_width.
-    - Preserves RGBA transparency for icons and graphics.
+    - Preserves RGBA transparency for icons, badges, and transparent graphics.
     - Converts output to modern WebP format for optimal loading performance.
     - Only processes newly uploaded files (instances of UploadedFile).
     """
     if not image_field:
         return
 
-    # Only compress if it is a new upload (not loaded from DB)
-    if not hasattr(image_field, 'file') or not isinstance(image_field.file, UploadedFile):
+    # Check whether image_field is an UploadedFile itself or a FieldFile wrapping an UploadedFile
+    target_file = None
+    if isinstance(image_field, UploadedFile):
+        target_file = image_field
+    elif hasattr(image_field, 'file') and isinstance(image_field.file, UploadedFile):
+        target_file = image_field.file
+    else:
         return
 
     try:
         # Open image via Pillow
-        img = Image.open(image_field.file)
+        img = Image.open(target_file)
 
-        # Transpose image according to EXIF orientation
-        if hasattr(img, '_getexif') and img._getexif() is not None:
-            img = ImageOps.exif_transpose(img)
+        # Transpose image according to EXIF orientation (handles no-EXIF natively)
+        img = ImageOps.exif_transpose(img)
 
         # Proportional resize if width exceeds max_width
         if img.width > max_width:
@@ -37,11 +44,11 @@ def compress_image(image_field, max_width=1200, quality=80):
         # Prepare memory buffer
         output = io.BytesIO()
 
-        # Handle alpha channel / transparency
+        # Handle alpha channel / transparency conversion
         if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-            save_mode = 'RGBA'
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
         else:
-            save_mode = 'RGB'
             if img.mode != 'RGB':
                 img = img.convert('RGB')
 
@@ -55,7 +62,7 @@ def compress_image(image_field, max_width=1200, quality=80):
         output.seek(0)
 
         # Re-wrap in Django's InMemoryUploadedFile
-        image_field.file = InMemoryUploadedFile(
+        new_file = InMemoryUploadedFile(
             output,
             'ImageField',
             new_filename,
@@ -63,7 +70,12 @@ def compress_image(image_field, max_width=1200, quality=80):
             output.getbuffer().nbytes,
             None
         )
-        image_field.name = new_filename
+
+        if hasattr(image_field, 'file'):
+            image_field.file = new_file
+            image_field.name = new_filename
+        else:
+            image_field.file = output
+            image_field.name = new_filename
     except Exception:
-        # If image processing fails, preserve original upload gracefully
-        pass
+        logger.exception("Failed to optimize uploaded image; preserving original file upload.")

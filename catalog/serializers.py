@@ -48,8 +48,14 @@ class CategoryTreeSerializer(serializers.ModelSerializer):
         ]
 
     def get_subcategories(self, obj):
-        # Relies on prefetch_related('subcategories') to avoid N+1 queries
-        children = obj.subcategories.all()
-        if children.exists():
+        # Materialize from prefetch cache to avoid issuing extra SQL queries.
+        # Calling .exists() or .filter() on a prefetched related manager bypasses
+        # Django's prefetch cache and triggers an uncached database query.
+        children = [
+            child for child in obj.subcategories.all()
+            if child.show_in_header
+        ]
+        if children:
+            children.sort(key=lambda c: (c.header_order, c.name))
             return CategoryTreeSerializer(children, many=True, context=self.context).data
         return []
