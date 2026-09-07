@@ -94,4 +94,4 @@ Open your browser and navigate to:
 ---
 
 ## 📘 About the Book
-*E-Commerce System Design* is a practical, engineering masterclass that moves beyond basic tutorials. It guides you step-by-step through building a battle-tested, failure-resilient backend handling atomic inventory locks (`select_for_update`), double-entry credit ledgers, dynamic GST invoicing, payment webhooks, and third-party logistics integrations.
+*E-Commerce System Design* is a practical, engineering masterclass that moves beyond basic tutorials. It guides you step-by-step through building a battle-tested, failure-resilient backend handling atomic inventory locks (`select_for_update`), immutable credit transaction ledgers, dynamic GST invoicing, payment webhooks, and third-party logistics integrations.

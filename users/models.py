@@ -96,7 +96,7 @@ class Address(models.Model):
 
 class WalletTransaction(models.Model):
     """
-    Append-only double-entry financial ledger recording all credit additions
+    Append-only financial transaction ledger recording all credit additions
     and debit deductions for customer store credit, supporting expiration
     schedules and FIFO bucket tracking.
     """
