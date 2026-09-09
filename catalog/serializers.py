@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category
+from .models import Category, Product, ProductVariant
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -59,3 +59,111 @@ class CategoryTreeSerializer(serializers.ModelSerializer):
             children.sort(key=lambda c: (c.header_order, c.name))
             return CategoryTreeSerializer(children, many=True, context=self.context).data
         return []
+
+
+class ProductVariantSerializer(serializers.ModelSerializer):
+    """
+    Serializer for child product variants (SKUs).
+    Exposes discrete inventory, SKU code, price override, and resolved effective price.
+    """
+    effective_price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True
+    )
+    in_stock = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = ProductVariant
+        fields = [
+            'id',
+            'product',
+            'name',
+            'sku',
+            'price_override',
+            'effective_price',
+            'stock_count',
+            'in_stock',
+            'image',
+        ]
+        read_only_fields = ['id', 'effective_price', 'in_stock']
+
+
+class ProductListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight catalog serializer for listing grids, category collections,
+    and search result cards.
+    """
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    category_slug = serializers.CharField(source='category.slug', read_only=True)
+    discount_percentage = serializers.ReadOnlyField()
+    is_discounted = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Product
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'category',
+            'category_name',
+            'category_slug',
+            'price',
+            'compare_price',
+            'discount_percentage',
+            'is_discounted',
+            'short_description',
+            'stock_count',
+            'in_stock',
+            'is_live',
+            'is_hero',
+            'is_popular',
+            'is_combo',
+            'created_at',
+        ]
+
+
+class ProductDetailSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive product serializer for Product Detail Pages (PDP).
+    Includes nested child variants, category hierarchy breadcrumbs,
+    and statutory GST metadata.
+    """
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    category_slug = serializers.CharField(source='category.slug', read_only=True)
+    category_breadcrumbs = serializers.ReadOnlyField(source='category.breadcrumbs')
+    discount_percentage = serializers.ReadOnlyField()
+    is_discounted = serializers.ReadOnlyField()
+    variants_list = ProductVariantSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Product
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'category',
+            'category_name',
+            'category_slug',
+            'category_breadcrumbs',
+            'price',
+            'compare_price',
+            'discount_percentage',
+            'is_discounted',
+            'short_description',
+            'description',
+            'stock_count',
+            'in_stock',
+            'is_live',
+            'is_hero',
+            'is_popular',
+            'is_combo',
+            'variant_name',
+            'variants',
+            'metafields',
+            'gst_rate',
+            'hsn_code',
+            'variants_list',
+            'created_at',
+            'updated_at',
+        ]

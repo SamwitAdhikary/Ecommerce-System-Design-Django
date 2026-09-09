@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.db import models
 from django.utils.text import slugify
 from django.core.exceptions import ValidationError
@@ -136,5 +137,269 @@ class Category(models.Model):
         self.full_clean()
         if not self.slug:
             self.slug = self._generate_unique_slug()
+        compress_image(self.image, max_width=800)
+        super().save(*args, **kwargs)
+
+
+class Product(models.Model):
+    """
+    Canonical catalog parent product entity.
+    Manages catalog discovery, SEO routing, merchandising flags,
+    statutory GST taxation metadata, and base/compare pricing.
+    """
+    GST_RATE_CHOICES = (
+        (Decimal('3.00'), '3% (Gold & Precious Metals)'),
+        (Decimal('5.00'), '5% (Apparel under ₹1,000 & Essentials)'),
+        (Decimal('12.00'), '12% (Standard Apparel & Accessories)'),
+        (Decimal('18.00'), '18% (Consumer Goods & Electronics)'),
+        (Decimal('28.00'), '28% (Luxury & Premium Items)'),
+    )
+
+    name = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Product title displayed across catalog and product pages."
+    )
+    slug = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        help_text="URL-friendly unique product slug."
+    )
+    category = models.ForeignKey(
+        Category,
+        related_name='products',
+        on_delete=models.PROTECT,
+        help_text="Primary category taxonomy node. Protected against accidental deletion."
+    )
+    price = models.DecimalField(
+        "Base Price (₹)",
+        max_digits=10,
+        decimal_places=2,
+        help_text="Base catalog selling price or starting variant price."
+    )
+    compare_price = models.DecimalField(
+        "Compare-at / MRP (₹)",
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Original strike-through Maximum Retail Price (MRP) for discount calculation."
+    )
+    cost_price = models.DecimalField(
+        "Cost Price (₹)",
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Procurement or manufacturing unit cost for gross profit margin analysis."
+    )
+    short_description = models.CharField(
+        max_length=500,
+        blank=True,
+        help_text="Concise summary snippet for catalog cards and search previews."
+    )
+    description = models.TextField(
+        "Long Description",
+        blank=True,
+        help_text="Detailed HTML or Markdown product description."
+    )
+    stock_count = models.PositiveIntegerField(
+        "Total Aggregated Stock",
+        default=0,
+        help_text="Summed available stock across all child variants or standalone inventory."
+    )
+    in_stock = models.BooleanField(
+        "In Stock",
+        default=True,
+        db_index=True,
+        help_text="Instant boolean availability flag."
+    )
+    is_live = models.BooleanField(
+        "Is Live on Storefront",
+        default=True,
+        db_index=True,
+        help_text="Master visibility toggle for storefront catalog listing."
+    )
+    is_hero = models.BooleanField(
+        "Hero Product",
+        default=False,
+        db_index=True,
+        help_text="Spotlight featured banner product on the storefront homepage."
+    )
+    is_popular = models.BooleanField(
+        "Popular Right Now",
+        default=False,
+        db_index=True,
+        help_text="Highlight in recommendation carousels and slide-out cart drawers."
+    )
+    is_combo = models.BooleanField(
+        "Combo Deal / Bundle",
+        default=False,
+        db_index=True,
+        help_text="Designates a multi-item combo or bundled gift set."
+    )
+    variant_name = models.CharField(
+        "Variant Dimension Label",
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Label for primary variant dimension (e.g., 'Size', 'Color', 'Bundle Pack')."
+    )
+    variants = models.JSONField(
+        "Variant Attribute Schema",
+        default=list,
+        blank=True,
+        help_text="JSON list of variant attribute options (e.g., [{'name': 'Size', 'options': ['S', 'M', 'L']}])."
+    )
+    metafields = models.JSONField(
+        "Custom Metafields",
+        default=dict,
+        blank=True,
+        help_text="Flexible key-value pairs for specifications (fabric, care, origin, warranty)."
+    )
+    gst_rate = models.DecimalField(
+        "GST Slab Rate (%)",
+        max_digits=5,
+        decimal_places=2,
+        choices=GST_RATE_CHOICES,
+        default=Decimal('12.00'),
+        help_text="Applicable Goods and Services Tax (GST) bracket."
+    )
+    hsn_code = models.CharField(
+        "HSN / SAC Code",
+        max_length=20,
+        blank=True,
+        null=True,
+        help_text="Harmonized System of Nomenclature code for statutory invoice compliance."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Product"
+        verbose_name_plural = "Products"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['is_live', 'category'], name='idx_product_live_category'),
+            models.Index(fields=['is_live', 'is_popular'], name='idx_product_live_popular'),
+            models.Index(fields=['is_live', 'is_hero'], name='idx_product_live_hero'),
+            models.Index(fields=['is_live', 'price'], name='idx_product_live_price'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def _generate_unique_slug(self) -> str:
+        base_slug = slugify(self.name)
+        if not base_slug:
+            base_slug = "product"
+
+        slug = base_slug
+        counter = 1
+        qs = Product.objects.all()
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+
+        while qs.filter(slug=slug).exists():
+            slug = f"{base_slug}-{counter}"
+            counter += 1
+
+        return slug
+
+    @property
+    def discount_percentage(self) -> int:
+        """
+        Calculates the integer percentage savings compared to compare_price (MRP).
+        Returns 0 if no valid compare_price exists or if price >= compare_price.
+        """
+        if self.compare_price and self.compare_price > self.price:
+            savings = (self.compare_price - self.price) / self.compare_price * Decimal('100')
+            return int(round(savings))
+        return 0
+
+    @property
+    def is_discounted(self) -> bool:
+        return self.discount_percentage > 0
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = self._generate_unique_slug()
+        self.in_stock = (self.stock_count > 0)
+        super().save(*args, **kwargs)
+
+
+class ProductVariant(models.Model):
+    """
+    Discrete inventory and SKU child entity for a parent product.
+    Represents specific size/color/pack permutations with independent
+    stock keeping, price overrides, and SKU identifiers.
+    """
+    product = models.ForeignKey(
+        Product,
+        related_name='variants_list',
+        on_delete=models.CASCADE,
+        help_text="Parent product owning this variant."
+    )
+    name = models.CharField(
+        "Variant Name",
+        max_length=255,
+        help_text="Variant label (e.g., 'Red / XL', '128GB / Midnight Black', 'Pack of 3')."
+    )
+    price_override = models.DecimalField(
+        "Price Override (₹)",
+        max_digits=10,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Optional variant-specific selling price. If omitted, inherits parent price."
+    )
+    stock_count = models.PositiveIntegerField(
+        "SKU Stock Count",
+        default=0,
+        help_text="Current available inventory for this discrete SKU."
+    )
+    sku = models.CharField(
+        "Stock Keeping Unit (SKU)",
+        max_length=100,
+        unique=True,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Unique inventory tracking code across the entire warehouse."
+    )
+    image = models.ImageField(
+        upload_to='variants/',
+        blank=True,
+        null=True,
+        help_text="Optional variant-specific product photo."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Product Variant"
+        verbose_name_plural = "Product Variants"
+        ordering = ['id']
+        indexes = [
+            models.Index(fields=['product', 'stock_count'], name='idx_variant_prod_stock'),
+        ]
+
+    def __str__(self):
+        return f"{self.product.name} - {self.name}"
+
+    @property
+    def effective_price(self) -> Decimal:
+        """
+        Returns the variant's price override if defined; otherwise falls back to parent price.
+        """
+        if self.price_override is not None:
+            return self.price_override
+        return self.product.price
+
+    @property
+    def in_stock(self) -> bool:
+        return self.stock_count > 0
+
+    def save(self, *args, **kwargs):
         compress_image(self.image, max_width=800)
         super().save(*args, **kwargs)

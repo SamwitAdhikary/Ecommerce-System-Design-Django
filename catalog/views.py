@@ -1,8 +1,13 @@
 from rest_framework import viewsets, permissions
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from .models import Category
-from .serializers import CategorySerializer, CategoryTreeSerializer
+from .models import Category, Product
+from .serializers import (
+    CategorySerializer,
+    CategoryTreeSerializer,
+    ProductListSerializer,
+    ProductDetailSerializer,
+)
 
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
@@ -73,3 +78,53 @@ class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
             context={'request': request}
         )
         return Response(serializer.data)
+
+
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Public catalog product viewset.
+    Provides paginated listings, slug-based lookups, merchandising filters,
+    and optimized child variant serialization.
+    """
+    lookup_field = 'slug'
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        qs = (
+            Product.objects.filter(is_live=True)
+            .select_related('category')
+            .prefetch_related('variants_list')
+        )
+
+        category_slug = self.request.query_params.get('category')
+        if category_slug:
+            qs = qs.filter(category__slug=category_slug)
+
+        is_popular = self.request.query_params.get('is_popular')
+        if is_popular and is_popular.lower() == 'true':
+            qs = qs.filter(is_popular=True)
+
+        is_hero = self.request.query_params.get('is_hero')
+        if is_hero and is_hero.lower() == 'true':
+            qs = qs.filter(is_hero=True)
+
+        is_combo = self.request.query_params.get('is_combo')
+        if is_combo and is_combo.lower() == 'true':
+            qs = qs.filter(is_combo=True)
+
+        in_stock_only = self.request.query_params.get('in_stock')
+        if in_stock_only and in_stock_only.lower() == 'true':
+            qs = qs.filter(in_stock=True)
+
+        ordering = self.request.query_params.get('ordering')
+        if ordering in ['price', '-price', 'created_at', '-created_at', 'name']:
+            qs = qs.order_by(ordering)
+        else:
+            qs = qs.order_by('-created_at')
+
+        return qs
+
+    def get_serializer_class(self):
+        if self.action == 'retrieve':
+            return ProductDetailSerializer
+        return ProductListSerializer
