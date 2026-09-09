@@ -3,7 +3,7 @@ set -e
 
 # ==============================================================================
 # Automated Continuous Deployment Script for E-Commerce Backend
-# Executes on every production update for zero-downtime releases.
+# Executes on every production update for graceful, automated releases.
 # ==============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,11 +36,11 @@ python manage.py migrate --noinput
 echo "🎨 5. Compiling static assets (WhiteNoise Manifest)..."
 python manage.py collectstatic --noinput
 
-# 6. Graceful zero-downtime service reload
-echo "🔄 6. Reloading Gunicorn worker processes (Zero-Downtime)..."
+# 6. Graceful service reload
+echo "🔄 6. Reloading Gunicorn worker processes (graceful)..."
 sudo systemctl reload gunicorn
 
 echo "========================================="
 echo "✅ DEPLOYMENT SUCCESSFUL!"
-echo "Your backend services have been updated and reloaded with zero downtime."
+echo "Your backend services have been updated and reloaded gracefully."
 echo "========================================="
