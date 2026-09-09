@@ -148,11 +148,11 @@ class Product(models.Model):
     statutory GST taxation metadata, and base/compare pricing.
     """
     GST_RATE_CHOICES = (
-        (Decimal('3.00'), '3% (Gold & Precious Metals)'),
-        (Decimal('5.00'), '5% (Apparel under ₹1,000 & Essentials)'),
-        (Decimal('12.00'), '12% (Standard Apparel & Accessories)'),
-        (Decimal('18.00'), '18% (Consumer Goods & Electronics)'),
-        (Decimal('28.00'), '28% (Luxury & Premium Items)'),
+        (Decimal('0.00'), '0% (Exempt Essentials & Unprocessed Goods)'),
+        (Decimal('3.00'), '3% (Gold, Silver & Precious Jewelry)'),
+        (Decimal('5.00'), '5% (Apparel, Footwear & Everyday Essentials)'),
+        (Decimal('18.00'), '18% (Standard Consumer Goods, Electronics & Services)'),
+        (Decimal('40.00'), '40% (Luxury, Premium Demerit & Sin Goods)'),
     )
 
     name = models.CharField(
@@ -204,9 +204,9 @@ class Product(models.Model):
         help_text="Detailed HTML or Markdown product description."
     )
     stock_count = models.PositiveIntegerField(
-        "Total Aggregated Stock",
+        "Stock Count",
         default=0,
-        help_text="Summed available stock across all child variants or standalone inventory."
+        help_text="Available inventory units (managed directly or synchronized with child variants in Chapter 13)."
     )
     in_stock = models.BooleanField(
         "In Stock",
@@ -262,15 +262,15 @@ class Product(models.Model):
         max_digits=5,
         decimal_places=2,
         choices=GST_RATE_CHOICES,
-        default=Decimal('12.00'),
-        help_text="Applicable Goods and Services Tax (GST) bracket."
+        default=Decimal('5.00'),
+        help_text="Applicable statutory Goods and Services Tax (GST) bracket."
     )
     hsn_code = models.CharField(
         "HSN / SAC Code",
         max_length=20,
         blank=True,
         null=True,
-        help_text="Harmonized System of Nomenclature code for statutory invoice compliance."
+        help_text="Harmonized System of Nomenclature code (e.g., '62052000' for men's cotton shirts) for statutory invoice compliance."
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
