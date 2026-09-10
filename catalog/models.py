@@ -321,6 +321,30 @@ class Product(models.Model):
     def is_discounted(self) -> bool:
         return self.discount_percentage > 0
 
+    def sync_with_variants(self):
+        """
+        Synchronizes parent stock count, in-stock availability, and starting price
+        from related child variants.
+        Called automatically on ProductVariant post_save and post_delete signals.
+        """
+        variants = list(self.variants_list.all())
+        if variants:
+            # 1. Total Aggregated Stock: Sum of all child SKU inventory counts
+            self.stock_count = sum(v.stock_count for v in variants)
+
+            # 2. Starting Price ("Starting at ₹X"): Minimum selling price among child variants
+            override_prices = [v.price_override for v in variants if v.price_override is not None]
+            if any(v.price_override is None for v in variants):
+                self.price = min(override_prices + [self.price])
+            elif override_prices:
+                self.price = min(override_prices)
+
+            # 3. Availability flag
+            self.in_stock = (self.stock_count > 0)
+
+            # Persist atomically with update_fields to avoid race conditions with other fields
+            self.save(update_fields=['stock_count', 'in_stock', 'price', 'updated_at'])
+
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = self._generate_unique_slug()
@@ -403,3 +427,22 @@ class ProductVariant(models.Model):
     def save(self, *args, **kwargs):
         compress_image(self.image, max_width=800)
         super().save(*args, **kwargs)
+
+
+# --- Signal Receivers for Automated Variant Synchronization ---
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+
+
+@receiver(post_save, sender=ProductVariant)
+@receiver(post_delete, sender=ProductVariant)
+def update_product_on_variant_change(sender, instance, **kwargs):
+    """
+    Automatically re-synchronizes parent product aggregates (stock count, in-stock flag,
+    and starting catalog price) whenever a child variant is created, modified, or deleted.
+    """
+    if instance.product_id:
+        try:
+            instance.product.sync_with_variants()
+        except Product.DoesNotExist:
+            pass
