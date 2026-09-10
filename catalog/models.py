@@ -344,6 +344,11 @@ class Product(models.Model):
 
             # Persist atomically with update_fields to avoid race conditions with other fields
             self.save(update_fields=['stock_count', 'in_stock', 'price', 'updated_at'])
+        else:
+            # When all child variants have been deleted, reset aggregates
+            self.stock_count = 0
+            self.in_stock = False
+            self.save(update_fields=['stock_count', 'in_stock', 'updated_at'])
 
     def save(self, *args, **kwargs):
         if not self.slug:
@@ -441,8 +446,8 @@ def update_product_on_variant_change(sender, instance, **kwargs):
     Automatically re-synchronizes parent product aggregates (stock count, in-stock flag,
     and starting catalog price) whenever a child variant is created, modified, or deleted.
     """
-    if instance.product_id:
-        try:
-            instance.product.sync_with_variants()
-        except Product.DoesNotExist:
-            pass
+    try:
+        instance.product.sync_with_variants()
+    except Product.DoesNotExist:
+        # Cascade deletion safety: parent row was deleted before child post_delete signal
+        pass
