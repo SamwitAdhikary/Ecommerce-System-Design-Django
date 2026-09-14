@@ -1,5 +1,5 @@
 from decimal import Decimal
-from django.db import models
+from django.db import models, transaction
 from django.utils.text import slugify
 from django.core.exceptions import ValidationError
 from core.image_optimizer import compress_image
@@ -505,6 +505,13 @@ class ProductImage(models.Model):
             models.Index(fields=['product', 'order'], name='idx_prod_img_order'),
             models.Index(fields=['product', 'is_thumbnail'], name='idx_prod_img_thumb'),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product'],
+                condition=models.Q(is_thumbnail=True),
+                name='unique_primary_thumbnail_per_product'
+            )
+        ]
 
     def __str__(self):
         label = f"{self.product.name} - Image #{self.pk or 'new'}"
@@ -513,19 +520,20 @@ class ProductImage(models.Model):
         return label
 
     def save(self, *args, **kwargs):
-        # 1. Enforce single-primary-thumbnail exclusivity per product
-        if self.is_thumbnail and self.product_id:
-            ProductImage.objects.filter(
-                product_id=self.product_id,
-                is_thumbnail=True
-            ).exclude(pk=self.pk).update(is_thumbnail=False)
+        # 1. Enforce single-primary-thumbnail exclusivity per product atomically
+        with transaction.atomic():
+            if self.is_thumbnail and self.product_id:
+                ProductImage.objects.filter(
+                    product_id=self.product_id,
+                    is_thumbnail=True
+                ).exclude(pk=self.pk).update(is_thumbnail=False)
 
-        # 2. Automatically optimize uploaded image to WebP
-        compress_image(self.image, max_width=1200)
-        super().save(*args, **kwargs)
+            # 2. Automatically optimize uploaded image to WebP
+            compress_image(self.image, max_width=1200)
+            super().save(*args, **kwargs)
 
 
-# --- Signal Receivers for Automated Variant Synchronization ---
+# --- Signal Receivers for Variant Synchronization & Media Cleanup ---
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 
@@ -542,3 +550,13 @@ def update_product_on_variant_change(sender, instance, **kwargs):
     except Product.DoesNotExist:
         # Cascade deletion safety: parent row was deleted before child post_delete signal
         pass
+
+
+@receiver(post_delete, sender=ProductImage)
+def delete_product_image_file(sender, instance, **kwargs):
+    """
+    Physically removes the image file from media storage when a ProductImage
+    record is deleted, preventing orphaned binary files on disk / S3.
+    """
+    if instance.image:
+        instance.image.delete(save=False)
