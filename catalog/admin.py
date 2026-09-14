@@ -1,6 +1,6 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
-from .models import Category, Product, ProductVariant
+from .models import Category, Product, ProductVariant, ProductImage
 
 
 class SubcategoryInline(TabularInline):
@@ -26,6 +26,12 @@ class CategoryAdmin(ModelAdmin):
     search_fields = ('name', 'slug')
     prepopulated_fields = {'slug': ('name',)}
     inlines = [SubcategoryInline]
+
+
+class ProductImageInline(TabularInline):
+    model = ProductImage
+    extra = 1
+    fields = ('image', 'alt_text', 'is_thumbnail', 'order', 'variant')
 
 
 class ProductVariantInline(TabularInline):
@@ -60,7 +66,7 @@ class ProductAdmin(ModelAdmin):
     )
     search_fields = ('name', 'slug', 'hsn_code', 'variants_list__sku')
     prepopulated_fields = {'slug': ('name',)}
-    inlines = [ProductVariantInline]
+    inlines = [ProductImageInline, ProductVariantInline]
     fieldsets = (
         ("General Information", {
             'fields': ('name', 'slug', 'category', 'short_description', 'description')
@@ -93,3 +99,18 @@ class ProductVariantAdmin(ModelAdmin):
     )
     list_filter = ('product__category',)
     search_fields = ('name', 'sku', 'product__name')
+
+
+@admin.register(ProductImage)
+class ProductImageAdmin(ModelAdmin):
+    list_display = (
+        'id',
+        'product',
+        'variant',
+        'alt_text',
+        'is_thumbnail',
+        'order',
+        'created_at',
+    )
+    list_filter = ('is_thumbnail', 'product__category')
+    search_fields = ('product__name', 'alt_text', 'variant__name')

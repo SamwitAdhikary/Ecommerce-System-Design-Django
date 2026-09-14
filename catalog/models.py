@@ -350,6 +350,25 @@ class Product(models.Model):
             self.in_stock = False
             self.save(update_fields=['stock_count', 'in_stock', 'updated_at'])
 
+    @property
+    def thumbnail_image(self):
+        """
+        Returns the primary thumbnail image for the product.
+        Falls back to the first image ordered by `order, id` if no image
+        is explicitly marked with `is_thumbnail=True`.
+        """
+        if hasattr(self, '_prefetched_objects_cache') and 'images' in self._prefetched_objects_cache:
+            images = list(self.images.all())
+            for img in images:
+                if img.is_thumbnail:
+                    return img
+            return images[0] if images else None
+
+        thumbnail = self.images.filter(is_thumbnail=True).first()
+        if thumbnail:
+            return thumbnail
+        return self.images.first()
+
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = self._generate_unique_slug()
@@ -431,6 +450,78 @@ class ProductVariant(models.Model):
 
     def save(self, *args, **kwargs):
         compress_image(self.image, max_width=800)
+        super().save(*args, **kwargs)
+
+
+class ProductImage(models.Model):
+    """
+    Multi-image gallery asset for a parent product.
+    Supports variant-specific photo mapping, drag-and-drop sort ordering,
+    explicit primary thumbnail flags, and automated WebP compression.
+    """
+    product = models.ForeignKey(
+        Product,
+        related_name='images',
+        on_delete=models.CASCADE,
+        help_text="Parent product owning this gallery image."
+    )
+    variant = models.ForeignKey(
+        ProductVariant,
+        null=True,
+        blank=True,
+        related_name='variant_images',
+        on_delete=models.SET_NULL,
+        help_text="Optional variant mapping (e.g., specific colorway photo)."
+    )
+    image = models.ImageField(
+        upload_to='products/',
+        help_text="Product photograph (automatically compressed to WebP)."
+    )
+    alt_text = models.CharField(
+        "Alt Text / Accessibility Label",
+        max_length=255,
+        blank=True,
+        help_text="Descriptive image caption for SEO and screen readers."
+    )
+    is_thumbnail = models.BooleanField(
+        "Is Primary Thumbnail",
+        default=False,
+        db_index=True,
+        help_text="Designates this image as the primary catalog card thumbnail."
+    )
+    order = models.PositiveIntegerField(
+        "Display Sort Order",
+        default=0,
+        db_index=True,
+        help_text="Ascending sequence for storefront carousel and gallery view."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Product Image"
+        verbose_name_plural = "Product Images"
+        ordering = ['order', 'id']
+        indexes = [
+            models.Index(fields=['product', 'order'], name='idx_prod_img_order'),
+            models.Index(fields=['product', 'is_thumbnail'], name='idx_prod_img_thumb'),
+        ]
+
+    def __str__(self):
+        label = f"{self.product.name} - Image #{self.pk or 'new'}"
+        if self.is_thumbnail:
+            label += " (Thumbnail)"
+        return label
+
+    def save(self, *args, **kwargs):
+        # 1. Enforce single-primary-thumbnail exclusivity per product
+        if self.is_thumbnail and self.product_id:
+            ProductImage.objects.filter(
+                product_id=self.product_id,
+                is_thumbnail=True
+            ).exclude(pk=self.pk).update(is_thumbnail=False)
+
+        # 2. Automatically optimize uploaded image to WebP
+        compress_image(self.image, max_width=1200)
         super().save(*args, **kwargs)
 
 

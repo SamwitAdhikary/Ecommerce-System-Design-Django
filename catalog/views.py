@@ -90,9 +90,9 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        qs = Product.objects.filter(is_live=True).select_related('category')
+        qs = Product.objects.filter(is_live=True).select_related('category').prefetch_related('images')
         if self.action == 'retrieve':
-            qs = qs.prefetch_related('variants_list')
+            qs = qs.prefetch_related('variants_list', 'images')
 
         category_slug = self.request.query_params.get('category')
         if category_slug:

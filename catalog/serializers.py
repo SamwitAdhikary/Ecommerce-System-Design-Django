@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, ProductVariant
+from .models import Category, Product, ProductVariant, ProductImage
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -48,9 +48,6 @@ class CategoryTreeSerializer(serializers.ModelSerializer):
         ]
 
     def get_subcategories(self, obj):
-        # Materialize from prefetch cache to avoid issuing extra SQL queries.
-        # Calling .exists() or .filter() on a prefetched related manager bypasses
-        # Django's prefetch cache and triggers an uncached database query.
         children = [
             child for child in obj.subcategories.all()
             if child.show_in_header
@@ -59,6 +56,25 @@ class CategoryTreeSerializer(serializers.ModelSerializer):
             children.sort(key=lambda c: (c.header_order, c.name))
             return CategoryTreeSerializer(children, many=True, context=self.context).data
         return []
+
+
+class ProductImageSerializer(serializers.ModelSerializer):
+    """
+    Serializer for multi-image product gallery assets.
+    Exposes WebP image URL, descriptive alt text, thumbnail flag, sort order, and variant binding.
+    """
+    class Meta:
+        model = ProductImage
+        fields = [
+            'id',
+            'image',
+            'alt_text',
+            'is_thumbnail',
+            'order',
+            'variant',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 class ProductVariantSerializer(serializers.ModelSerializer):
@@ -98,6 +114,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     category_slug = serializers.CharField(source='category.slug', read_only=True)
     discount_percentage = serializers.ReadOnlyField()
     is_discounted = serializers.ReadOnlyField()
+    thumbnail = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -112,6 +129,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             'compare_price',
             'discount_percentage',
             'is_discounted',
+            'thumbnail',
             'short_description',
             'stock_count',
             'in_stock',
@@ -122,11 +140,20 @@ class ProductListSerializer(serializers.ModelSerializer):
             'created_at',
         ]
 
+    def get_thumbnail(self, obj):
+        img = obj.thumbnail_image
+        if img and img.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(img.image.url)
+            return img.image.url
+        return None
+
 
 class ProductDetailSerializer(serializers.ModelSerializer):
     """
     Comprehensive product serializer for Product Detail Pages (PDP).
-    Includes nested child variants, category hierarchy breadcrumbs,
+    Includes nested child variants, gallery images, category breadcrumbs,
     and statutory GST metadata.
     """
     category_name = serializers.CharField(source='category.name', read_only=True)
@@ -134,6 +161,8 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     category_breadcrumbs = serializers.ReadOnlyField(source='category.breadcrumbs')
     discount_percentage = serializers.ReadOnlyField()
     is_discounted = serializers.ReadOnlyField()
+    thumbnail = serializers.SerializerMethodField()
+    images = ProductImageSerializer(many=True, read_only=True)
     variants_list = ProductVariantSerializer(many=True, read_only=True)
 
     class Meta:
@@ -150,6 +179,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'compare_price',
             'discount_percentage',
             'is_discounted',
+            'thumbnail',
             'short_description',
             'description',
             'stock_count',
@@ -163,7 +193,17 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'metafields',
             'gst_rate',
             'hsn_code',
+            'images',
             'variants_list',
             'created_at',
             'updated_at',
         ]
+
+    def get_thumbnail(self, obj):
+        img = obj.thumbnail_image
+        if img and img.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(img.image.url)
+            return img.image.url
+        return None
