@@ -145,6 +145,25 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
         return ProductListSerializer
 
 
+def check_verified_purchase(user, product) -> bool:
+    """
+    Evaluates whether the user has purchased and received the physical product.
+    Uses dynamic model resolution (apps.get_model) to preserve modular decoupling between apps.
+    """
+    if not user or not user.is_authenticated:
+        return False
+
+    try:
+        Order = apps.get_model('orders', 'Order')
+        return Order.objects.filter(
+            user=user,
+            items__product=product,
+            status='DELIVERED'
+        ).exists()
+    except (LookupError, AttributeError):
+        return False
+
+
 class ReviewViewSet(viewsets.ModelViewSet):
     """
     Storefront review management viewset.
@@ -204,16 +223,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
         comment = request.data.get('comment', '').strip()
 
         # 3. Check for verified purchase against delivered orders
-        is_verified = False
-        try:
-            Order = apps.get_model('orders', 'Order')
-            is_verified = Order.objects.filter(
-                user=user,
-                items__product=product,
-                status='DELIVERED'
-            ).exists()
-        except (LookupError, AttributeError):
-            is_verified = False
+        is_verified = check_verified_purchase(user, product)
 
         # 4. Ingest review
         review = Review.objects.create(
@@ -255,17 +265,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
         user = request.user
         already_reviewed = Review.objects.filter(product=product, user=user).exists()
-
-        is_verified = False
-        try:
-            Order = apps.get_model('orders', 'Order')
-            is_verified = Order.objects.filter(
-                user=user,
-                items__product=product,
-                status='DELIVERED'
-            ).exists()
-        except (LookupError, AttributeError):
-            is_verified = False
+        is_verified = check_verified_purchase(user, product)
 
         return Response({
             "product_id": product.id,
@@ -368,12 +368,13 @@ class ActiveVisitorViewSet(viewsets.ModelViewSet):
         """
         from django.utils import timezone
         import datetime
+        import uuid
 
         session_key = request.data.get('session_key')
         if not session_key:
             if not request.session.session_key:
                 request.session.save()
-            session_key = request.session.session_key or 'anon-client'
+            session_key = request.session.session_key or f"anon-{uuid.uuid4().hex[:12]}"
 
         current_page = request.data.get('current_page', 'Shop')
         action_name = request.data.get('action', 'viewing')
