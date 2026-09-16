@@ -1,7 +1,9 @@
 from decimal import Decimal
+from django.conf import settings
 from django.db import models, transaction
 from django.utils.text import slugify
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
 from core.image_optimizer import compress_image
 
 
@@ -369,6 +371,49 @@ class Product(models.Model):
             return thumbnail
         return self.images.first()
 
+    @property
+    def average_rating(self) -> float:
+        """
+        Calculates the arithmetic mean of approved customer ratings for this product.
+        Returns 0.0 if no approved reviews exist.
+        Checks in-memory prefetched cache first to eliminate N+1 queries.
+        """
+        if hasattr(self, '_prefetched_objects_cache') and 'reviews' in self._prefetched_objects_cache:
+            approved = [r.rating for r in self.reviews.all() if r.is_approved]
+            return round(sum(approved) / len(approved), 1) if approved else 0.0
+
+        from django.db.models import Avg
+        avg = self.reviews.filter(is_approved=True).aggregate(avg=Avg('rating'))['avg']
+        return round(float(avg), 1) if avg is not None else 0.0
+
+    @property
+    def review_count(self) -> int:
+        """
+        Returns the total count of approved reviews for this product.
+        Checks in-memory prefetched cache first to eliminate N+1 queries.
+        """
+        if hasattr(self, '_prefetched_objects_cache') and 'reviews' in self._prefetched_objects_cache:
+            return sum(1 for r in self.reviews.all() if r.is_approved)
+        return self.reviews.filter(is_approved=True).count()
+
+    @property
+    def rating_breakdown(self) -> dict:
+        """
+        Returns a distribution dictionary with counts and percentages for each star rating (1 to 5).
+        """
+        if hasattr(self, '_prefetched_objects_cache') and 'reviews' in self._prefetched_objects_cache:
+            approved = [r.rating for r in self.reviews.all() if r.is_approved]
+        else:
+            approved = list(self.reviews.filter(is_approved=True).values_list('rating', flat=True))
+
+        total = len(approved)
+        breakdown = {}
+        for star in range(5, 0, -1):
+            count = approved.count(star)
+            pct = round((count / total * 100), 1) if total > 0 else 0.0
+            breakdown[str(star)] = {'count': count, 'percentage': pct}
+        return breakdown
+
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = self._generate_unique_slug()
@@ -560,3 +605,198 @@ def delete_product_image_file(sender, instance, **kwargs):
     """
     if instance.image:
         instance.image.delete(save=False)
+
+
+class Review(models.Model):
+    """
+    Customer review and rating entity for a catalog product.
+    Includes moderation status, verified-purchase certification,
+    and a database-level unique constraint preventing duplicate reviews per user.
+    """
+    product = models.ForeignKey(
+        Product,
+        related_name='reviews',
+        on_delete=models.CASCADE,
+        help_text="Product being reviewed."
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name='reviews',
+        on_delete=models.CASCADE,
+        help_text="User who authored the review."
+    )
+    rating = models.PositiveSmallIntegerField(
+        "Star Rating",
+        choices=[(i, f"{i} Stars") for i in range(1, 6)],
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Customer satisfaction rating from 1 (lowest) to 5 (highest)."
+    )
+    comment = models.TextField(
+        "Review Comment",
+        blank=True,
+        default='',
+        help_text="Detailed customer feedback and experience description."
+    )
+    verified_purchase = models.BooleanField(
+        "Verified Purchase",
+        default=False,
+        db_index=True,
+        help_text="Indicates whether the author had a verified, delivered order for this product."
+    )
+    is_approved = models.BooleanField(
+        "Approved for Display",
+        default=True,
+        db_index=True,
+        help_text="Moderation flag controlling public storefront visibility."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Product Review"
+        verbose_name_plural = "Product Reviews"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['product', 'is_approved', '-created_at'], name='idx_rev_prod_app_date'),
+            models.Index(fields=['user', '-created_at'], name='idx_rev_user_date'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['product', 'user'],
+                name='unique_user_product_review'
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.product.name} ({self.rating}★)"
+
+
+class ReviewImage(models.Model):
+    """
+    Customer-uploaded photo attachment for a product review (unboxing, fit, texture).
+    Automatically compressed to responsive WebP format.
+    """
+    review = models.ForeignKey(
+        Review,
+        related_name='images',
+        on_delete=models.CASCADE,
+        help_text="Parent review owning this image attachment."
+    )
+    image = models.ImageField(
+        upload_to='reviews/',
+        help_text="Customer photo attachment (automatically optimized to WebP)."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Review Image"
+        verbose_name_plural = "Review Images"
+        ordering = ['id']
+
+    def __str__(self):
+        return f"Review #{self.review_id} Image #{self.pk or 'new'}"
+
+    def save(self, *args, **kwargs):
+        compress_image(self.image, max_width=800)
+        super().save(*args, **kwargs)
+
+
+@receiver(post_delete, sender=ReviewImage)
+def delete_review_image_file(sender, instance, **kwargs):
+    """
+    Physically removes the image file from media storage when a ReviewImage
+    record is deleted, preventing orphaned binary files on disk / S3.
+    """
+    if instance.image:
+        instance.image.delete(save=False)
+
+
+class Wishlist(models.Model):
+    """
+    Persistent customer product wishlist.
+    Maintains a 1-to-1 relationship with the authenticated User and a M2M mapping with Product.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        related_name='wishlist',
+        on_delete=models.CASCADE,
+        help_text="User owning this saved wishlist."
+    )
+    products = models.ManyToManyField(
+        Product,
+        related_name='wishlisted_by',
+        blank=True,
+        help_text="Saved catalog products."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Wishlist"
+        verbose_name_plural = "Wishlists"
+
+    def __str__(self):
+        return f"Wishlist ({self.user.email})"
+
+    def toggle(self, product: Product) -> tuple[bool, int]:
+        """
+        Atomically adds or removes a product from the wishlist.
+        Returns a tuple: (is_added: bool, total_items_count: int).
+        """
+        if self.products.filter(pk=product.pk).exists():
+            self.products.remove(product)
+            added = False
+        else:
+            self.products.add(product)
+            added = True
+        return added, self.products.count()
+
+
+class ActiveVisitor(models.Model):
+    """
+    Ephemeral storefront visitor presence record for real-time traffic monitoring
+    and social proof urgency ("12 shoppers currently viewing this category").
+    """
+    session_key = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        help_text="Anonymous session identifier or user token."
+    )
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="Client IP address for telemetry and geolocation."
+    )
+    city = models.CharField(max_length=100, default='Unknown')
+    region = models.CharField(max_length=100, default='Unknown')
+    country = models.CharField(max_length=100, default='India')
+    latitude = models.FloatField(default=20.5937)
+    longitude = models.FloatField(default=78.9629)
+    current_page = models.CharField(max_length=255, default='Shop')
+    action = models.CharField(
+        max_length=50,
+        default='viewing',
+        help_text="Current shopper intent action: viewing, cart, checkout, purchased."
+    )
+    last_activity = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Active Visitor"
+        verbose_name_plural = "Active Visitors"
+        ordering = ['-last_activity']
+
+    def __str__(self):
+        return f"{self.session_key[:8]}... - {self.city} ({self.action})"
+
+    @classmethod
+    def prune_stale(cls, timeout_minutes: int = 15) -> int:
+        """
+        Prunes visitor presence records older than timeout_minutes.
+        Returns the number of deleted records.
+        """
+        from django.utils import timezone
+        import datetime
+        cutoff = timezone.now() - datetime.timedelta(minutes=timeout_minutes)
+        deleted_count, _ = cls.objects.filter(last_activity__lt=cutoff).delete()
+        return deleted_count

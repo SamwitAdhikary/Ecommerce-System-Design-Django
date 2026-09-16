@@ -1,5 +1,14 @@
 from rest_framework import serializers
-from .models import Category, Product, ProductVariant, ProductImage
+from .models import (
+    Category,
+    Product,
+    ProductVariant,
+    ProductImage,
+    Review,
+    ReviewImage,
+    Wishlist,
+    ActiveVisitor,
+)
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -105,6 +114,52 @@ class ProductVariantSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'effective_price', 'in_stock']
 
 
+class ReviewImageSerializer(serializers.ModelSerializer):
+    """
+    Serializer for customer review photo attachments.
+    """
+    class Meta:
+        model = ReviewImage
+        fields = ['id', 'image', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    """
+    Public and customer review serializer exposing author name, star rating,
+    detailed comment, verified purchase badge, and attached customer photos.
+    """
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_name = serializers.SerializerMethodField()
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_slug = serializers.CharField(source='product.slug', read_only=True)
+    images = ReviewImageSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Review
+        fields = [
+            'id',
+            'product',
+            'product_name',
+            'product_slug',
+            'user',
+            'user_email',
+            'user_name',
+            'rating',
+            'comment',
+            'verified_purchase',
+            'is_approved',
+            'images',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'user', 'verified_purchase', 'is_approved', 'created_at', 'updated_at']
+
+    def get_user_name(self, obj) -> str:
+        name = f"{obj.user.first_name} {obj.user.last_name}".strip()
+        return name if name else obj.user.email.split('@')[0]
+
+
 class ProductListSerializer(serializers.ModelSerializer):
     """
     Lightweight catalog serializer for listing grids, category collections,
@@ -115,6 +170,8 @@ class ProductListSerializer(serializers.ModelSerializer):
     discount_percentage = serializers.ReadOnlyField()
     is_discounted = serializers.ReadOnlyField()
     thumbnail = serializers.SerializerMethodField()
+    rating = serializers.FloatField(source='average_rating', read_only=True)
+    review_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Product
@@ -130,6 +187,8 @@ class ProductListSerializer(serializers.ModelSerializer):
             'discount_percentage',
             'is_discounted',
             'thumbnail',
+            'rating',
+            'review_count',
             'short_description',
             'stock_count',
             'in_stock',
@@ -154,7 +213,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     """
     Comprehensive product serializer for Product Detail Pages (PDP).
     Includes nested child variants, gallery images, category breadcrumbs,
-    and statutory GST metadata.
+    statutory GST metadata, customer reviews, and aggregated star ratings.
     """
     category_name = serializers.CharField(source='category.name', read_only=True)
     category_slug = serializers.CharField(source='category.slug', read_only=True)
@@ -162,8 +221,12 @@ class ProductDetailSerializer(serializers.ModelSerializer):
     discount_percentage = serializers.ReadOnlyField()
     is_discounted = serializers.ReadOnlyField()
     thumbnail = serializers.SerializerMethodField()
+    rating = serializers.FloatField(source='average_rating', read_only=True)
+    review_count = serializers.IntegerField(read_only=True)
+    rating_breakdown = serializers.DictField(read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
     variants_list = ProductVariantSerializer(many=True, read_only=True)
+    reviews = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -180,6 +243,9 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'discount_percentage',
             'is_discounted',
             'thumbnail',
+            'rating',
+            'review_count',
+            'rating_breakdown',
             'short_description',
             'description',
             'stock_count',
@@ -195,6 +261,7 @@ class ProductDetailSerializer(serializers.ModelSerializer):
             'hsn_code',
             'images',
             'variants_list',
+            'reviews',
             'created_at',
             'updated_at',
         ]
@@ -207,3 +274,49 @@ class ProductDetailSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(img.image.url)
             return img.image.url
         return None
+
+    def get_reviews(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'reviews' in obj._prefetched_objects_cache:
+            approved = [r for r in obj.reviews.all() if r.is_approved]
+        else:
+            approved = obj.reviews.filter(is_approved=True).select_related('user').prefetch_related('images')
+        return ReviewSerializer(approved, many=True, context=self.context).data
+
+
+class WishlistSerializer(serializers.ModelSerializer):
+    """
+    Customer wishlist serializer with nested product cards and total item count.
+    """
+    products = ProductListSerializer(many=True, read_only=True)
+    total_items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Wishlist
+        fields = ['id', 'products', 'total_items', 'updated_at']
+        read_only_fields = ['id', 'total_items', 'updated_at']
+
+    def get_total_items(self, obj) -> int:
+        return obj.products.count()
+
+
+class ActiveVisitorSerializer(serializers.ModelSerializer):
+    """
+    Storefront active visitor telemetry serializer.
+    """
+    class Meta:
+        model = ActiveVisitor
+        fields = [
+            'id',
+            'session_key',
+            'ip_address',
+            'city',
+            'region',
+            'country',
+            'latitude',
+            'longitude',
+            'current_page',
+            'action',
+            'last_activity',
+        ]
+        read_only_fields = ['id', 'last_activity']
+

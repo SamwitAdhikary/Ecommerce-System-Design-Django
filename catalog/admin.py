@@ -1,6 +1,15 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
-from .models import Category, Product, ProductVariant, ProductImage
+from .models import (
+    Category,
+    Product,
+    ProductVariant,
+    ProductImage,
+    Review,
+    ReviewImage,
+    Wishlist,
+    ActiveVisitor,
+)
 
 
 class SubcategoryInline(TabularInline):
@@ -114,3 +123,67 @@ class ProductImageAdmin(ModelAdmin):
     )
     list_filter = ('is_thumbnail', 'product__category')
     search_fields = ('product__name', 'alt_text', 'variant__name')
+
+
+class ReviewImageInline(TabularInline):
+    model = ReviewImage
+    extra = 0
+    fields = ('image', 'created_at')
+    readonly_fields = ('created_at',)
+
+
+@admin.register(Review)
+class ReviewAdmin(ModelAdmin):
+    list_display = (
+        'id',
+        'product',
+        'user',
+        'rating',
+        'verified_purchase',
+        'is_approved',
+        'created_at',
+    )
+    list_filter = ('rating', 'verified_purchase', 'is_approved', 'created_at')
+    search_fields = ('product__name', 'user__email', 'comment')
+    actions = ['approve_reviews', 'unapprove_reviews']
+    inlines = [ReviewImageInline]
+
+    @admin.action(description="Approve selected customer reviews")
+    def approve_reviews(self, request, queryset):
+        queryset.update(is_approved=True)
+
+    @admin.action(description="Unapprove / hide selected customer reviews")
+    def unapprove_reviews(self, request, queryset):
+        queryset.update(is_approved=False)
+
+
+@admin.register(Wishlist)
+class WishlistAdmin(ModelAdmin):
+    list_display = ('id', 'user', 'product_count', 'updated_at')
+    search_fields = ('user__email',)
+    filter_horizontal = ('products',)
+
+    def product_count(self, obj):
+        return obj.products.count()
+    product_count.short_description = "Saved Items"
+
+
+@admin.register(ActiveVisitor)
+class ActiveVisitorAdmin(ModelAdmin):
+    list_display = (
+        'session_key_preview',
+        'ip_address',
+        'city',
+        'region',
+        'country',
+        'current_page',
+        'action',
+        'last_activity',
+    )
+    list_filter = ('action', 'country', 'current_page')
+    search_fields = ('session_key', 'ip_address', 'city', 'region')
+
+    def session_key_preview(self, obj):
+        return f"{obj.session_key[:12]}..."
+    session_key_preview.short_description = "Session"
+
