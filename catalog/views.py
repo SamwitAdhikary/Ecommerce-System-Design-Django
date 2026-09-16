@@ -363,10 +363,14 @@ class ActiveVisitorViewSet(viewsets.ModelViewSet):
     def heartbeat(self, request):
         """
         Ingests a client presence heartbeat and updates/creates the visitor record.
+        Real-time counts query the indexed active TTL window (15 mins), while physical
+        cleanup is offloaded to the 'prune_active_visitors' management command.
         """
+        from django.utils import timezone
+        import datetime
+
         session_key = request.data.get('session_key')
         if not session_key:
-            # Fallback to session key from Django session if available
             if not request.session.session_key:
                 request.session.save()
             session_key = request.session.session_key or 'anon-client'
@@ -393,11 +397,10 @@ class ActiveVisitorViewSet(viewsets.ModelViewSet):
             }
         )
 
-        # Prune stale visitors inactive for more than 15 minutes
-        ActiveVisitor.prune_stale(timeout_minutes=15)
-
-        total_active = ActiveVisitor.objects.count()
-        page_active = ActiveVisitor.objects.filter(current_page=current_page).count()
+        # Fast query over active window without hammering database with synchronous DELETEs
+        cutoff = timezone.now() - datetime.timedelta(minutes=15)
+        total_active = ActiveVisitor.objects.filter(last_activity__gte=cutoff).count()
+        page_active = ActiveVisitor.objects.filter(current_page=current_page, last_activity__gte=cutoff).count()
 
         return Response({
             "status": "ok",
@@ -411,12 +414,16 @@ class ActiveVisitorViewSet(viewsets.ModelViewSet):
         """
         Returns live storefront presence statistics.
         """
-        ActiveVisitor.prune_stale(timeout_minutes=15)
-        total_active = ActiveVisitor.objects.count()
+        from django.utils import timezone
+        import datetime
+        cutoff = timezone.now() - datetime.timedelta(minutes=15)
+        active_qs = ActiveVisitor.objects.filter(last_activity__gte=cutoff)
+        total_active = active_qs.count()
         return Response({
             "total_active_visitors": total_active,
             "by_action": list(
-                ActiveVisitor.objects.values('action')
+                active_qs.values('action')
             ),
         })
+
 
