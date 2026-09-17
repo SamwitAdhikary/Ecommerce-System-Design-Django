@@ -1,7 +1,12 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import CartViewSet
 
 app_name = 'orders'
 
+router = DefaultRouter()
+router.register(r'cart', CartViewSet, basename='cart')
+
 urlpatterns = [
-    # Orders, Cart, Checkout, and Webhook endpoints will be added in Part V & VI
+    path('', include(router.urls)),
 ]

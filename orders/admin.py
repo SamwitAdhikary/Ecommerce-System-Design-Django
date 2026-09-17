@@ -1,2 +1,40 @@
 from django.contrib import admin
-# Orders models will be registered here in Part V
+from .models import Cart, CartItem
+
+
+class CartItemInline(admin.TabularInline):
+    model = CartItem
+    extra = 0
+    fields = ['product', 'variant', 'quantity', 'get_unit_price', 'get_line_total', 'updated_at']
+    readonly_fields = ['get_unit_price', 'get_line_total', 'updated_at']
+
+    def get_unit_price(self, obj):
+        return f"₹{obj.unit_price:.2f}"
+    get_unit_price.short_description = "Unit Price"
+
+    def get_line_total(self, obj):
+        return f"₹{obj.line_total:.2f}"
+    get_line_total.short_description = "Line Total"
+
+
+@admin.register(Cart)
+class CartAdmin(admin.ModelAdmin):
+    list_display = ['id', 'get_owner', 'get_total_items', 'get_subtotal', 'abandoned_email_sent', 'updated_at']
+    list_filter = ['abandoned_email_sent', 'created_at', 'updated_at']
+    search_fields = ['user__email', 'session_key']
+    readonly_fields = ['get_subtotal', 'get_total_items', 'created_at', 'updated_at']
+    inlines = [CartItemInline]
+
+    def get_owner(self, obj):
+        if obj.user:
+            return f"User: {obj.user.email}"
+        return f"Guest: {obj.session_key[:12]}..."
+    get_owner.short_description = "Cart Owner"
+
+    def get_total_items(self, obj):
+        return obj.total_items
+    get_total_items.short_description = "Total Items"
+
+    def get_subtotal(self, obj):
+        return f"₹{obj.subtotal:.2f}"
+    get_subtotal.short_description = "Subtotal"
