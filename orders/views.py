@@ -2,7 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, NotFound
-from django.db import transaction
+from django.db import transaction, IntegrityError
 import uuid
 
 from .models import Cart, CartItem
@@ -114,12 +114,24 @@ class CartViewSet(viewsets.ViewSet):
                 cart_item.save(update_fields=['quantity', 'updated_at'])
             else:
                 clamped_quantity = min(quantity, effective_stock)
-                cart_item = CartItem.objects.create(
-                    cart=cart,
-                    product=product,
-                    variant=variant,
-                    quantity=max(1, clamped_quantity)
-                )
+                try:
+                    with transaction.atomic():
+                        cart_item = CartItem.objects.create(
+                            cart=cart,
+                            product=product,
+                            variant=variant,
+                            quantity=max(1, clamped_quantity)
+                        )
+                except IntegrityError:
+                    # Gracefully recover from double-click concurrency race: fetch and update existing row
+                    cart_item = CartItem.objects.get(
+                        cart=cart,
+                        product=product,
+                        variant=variant
+                    )
+                    new_quantity = min(cart_item.quantity + quantity, effective_stock)
+                    cart_item.quantity = max(1, new_quantity)
+                    cart_item.save(update_fields=['quantity', 'updated_at'])
 
         serializer = CartSerializer(cart, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
