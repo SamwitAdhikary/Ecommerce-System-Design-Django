@@ -90,6 +90,8 @@ class ShippingEstimateResponseSerializer(serializers.Serializer):
     amount_needed_for_free_shipping = serializers.DecimalField(max_digits=10, decimal_places=2)
     cod_charge = serializers.DecimalField(max_digits=10, decimal_places=2)
     is_cod = serializers.BooleanField()
+    partial_cod_deposit_percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
+    deposit_amount_due = serializers.DecimalField(max_digits=10, decimal_places=2)
     estimated_total = serializers.DecimalField(max_digits=10, decimal_places=2)
     minimum_order_value = serializers.DecimalField(max_digits=10, decimal_places=2)
     meets_minimum_order = serializers.BooleanField()

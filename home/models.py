@@ -1,6 +1,6 @@
 from decimal import Decimal
 from django.db import models
-from django.core.exceptions import ValidationError
+from django.db.models import ProtectedError
 
 
 class SiteSettings(models.Model):
@@ -101,7 +101,7 @@ class SiteSettings(models.Model):
 
     def delete(self, *args, **kwargs):
         """Prevent deletion of the singleton instance."""
-        raise ValidationError("The singleton SiteSettings instance cannot be deleted.")
+        raise ProtectedError("The singleton SiteSettings instance cannot be deleted.", [self])
 
     @classmethod
     def get_solo(cls):
@@ -113,8 +113,9 @@ class SiteSettings(models.Model):
 
     def calculate_shipping(self, state=None, subtotal=Decimal('0.00'), is_cod=False):
         """
-        Calculates dynamic delivery fees, free shipping eligibility, and COD surcharges
-        based on destination state, cart subtotal, and payment method.
+        Calculates dynamic delivery fees, free shipping eligibility, COD surcharges,
+        and required upfront COD deposits based on destination state, cart subtotal,
+        and payment method.
         """
         if not isinstance(subtotal, Decimal):
             subtotal = Decimal(str(subtotal))
@@ -149,6 +150,12 @@ class SiteSettings(models.Model):
         estimated_total = subtotal + applied_shipping_fee + applied_cod_fee
         meets_minimum_order = subtotal >= self.minimum_order_value
 
+        # Calculate partial COD advance deposit if applicable
+        if is_cod and self.partial_cod_deposit_percentage > Decimal('0.00'):
+            deposit_amount_due = (estimated_total * (self.partial_cod_deposit_percentage / Decimal('100.00'))).quantize(Decimal('0.01'))
+        else:
+            deposit_amount_due = Decimal('0.00')
+
         return {
             'state': state or '',
             'matched_zone': matched_zone_name,
@@ -160,6 +167,8 @@ class SiteSettings(models.Model):
             'amount_needed_for_free_shipping': amount_needed_for_free_shipping,
             'cod_charge': applied_cod_fee,
             'is_cod': is_cod,
+            'partial_cod_deposit_percentage': self.partial_cod_deposit_percentage,
+            'deposit_amount_due': deposit_amount_due,
             'estimated_total': estimated_total,
             'minimum_order_value': self.minimum_order_value,
             'meets_minimum_order': meets_minimum_order,
