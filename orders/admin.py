@@ -28,14 +28,12 @@ class CartAdmin(admin.ModelAdmin):
 
     @admin.action(description="Dispatch recovery email to selected abandoned carts")
     def send_recovery_email_action(self, request, queryset):
-        from .emails import send_abandoned_cart_email
+        from .tasks import dispatch_single_cart_recovery_email
         dispatched = 0
-        for cart in queryset.filter(items__isnull=False, user__isnull=False):
-            if send_abandoned_cart_email(cart):
-                cart.abandoned_email_sent = True
-                cart.save(update_fields=['abandoned_email_sent'])
-                dispatched += 1
-        self.message_user(request, f"Successfully dispatched recovery emails to {dispatched} cart(s).")
+        for cart in queryset.filter(items__isnull=False, user__isnull=False, abandoned_email_sent=False):
+            dispatch_single_cart_recovery_email.delay(cart.id)
+            dispatched += 1
+        self.message_user(request, f"Queued recovery emails for {dispatched} cart(s).")
 
     def get_owner(self, obj):
         if obj.user:

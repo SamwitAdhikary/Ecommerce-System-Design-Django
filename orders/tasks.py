@@ -45,16 +45,21 @@ def send_abandoned_cart_recovery_emails(hours_threshold: int = 2, dry_run: bool 
                 if cart.abandoned_email_sent or not cart.items.exists():
                     continue
 
-                sent = send_abandoned_cart_email(cart)
-                if sent:
-                    cart.abandoned_email_sent = True
-                    # Avoid touching updated_at to preserve accurate abandonment timing
-                    Cart.objects.filter(id=cart.id).update(abandoned_email_sent=True)
-                    dispatched_count += 1
+                # Claim task by marking flag under lock to prevent concurrent workers from claiming it
+                Cart.objects.filter(id=cart.id).update(abandoned_email_sent=True)
+
+            # Database lock is released; perform slow network I/O outside transaction.atomic()
+            sent = send_abandoned_cart_email(cart)
+            if sent:
+                dispatched_count += 1
+            else:
+                # Revert flag if sending failed so it can be retried in future runs
+                Cart.objects.filter(id=cart.id).update(abandoned_email_sent=False)
         except Cart.DoesNotExist:
             continue
-        except Exception as exc:
-            # In production, log error to Sentry or logger
+        except Exception:
+            # In production, revert flag on error to allow future retry
+            Cart.objects.filter(id=cart_id).update(abandoned_email_sent=False)
             continue
 
     return {
@@ -71,14 +76,20 @@ def dispatch_single_cart_recovery_email(cart_id: int) -> bool:
     Asynchronous task to format and dispatch a recovery email for a specific cart instance.
     """
     try:
-        cart = Cart.objects.get(id=cart_id)
-        if not cart.user or not cart.user.email or not cart.items.exists():
-            return False
-
-        sent = send_abandoned_cart_email(cart)
-        if sent:
+        with transaction.atomic():
+            cart = Cart.objects.select_for_update().get(id=cart_id)
+            if not cart.user or not cart.user.email or not cart.items.exists() or cart.abandoned_email_sent:
+                return False
             Cart.objects.filter(id=cart.id).update(abandoned_email_sent=True)
-            return True
-        return False
+
+        # Database lock is released; perform network I/O outside transaction
+        sent = send_abandoned_cart_email(cart)
+        if not sent:
+            Cart.objects.filter(id=cart.id).update(abandoned_email_sent=False)
+            return False
+        return True
     except Cart.DoesNotExist:
+        return False
+    except Exception:
+        Cart.objects.filter(id=cart_id).update(abandoned_email_sent=False)
         return False
