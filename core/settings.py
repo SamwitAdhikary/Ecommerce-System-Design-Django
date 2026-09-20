@@ -207,3 +207,26 @@ if USE_S3:
     }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Celery & Redis Task Queue Configuration
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://127.0.0.1:6379/0')
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://127.0.0.1:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60
+
+# Celery Beat Periodic Task Schedules
+CELERY_BEAT_SCHEDULE = {
+    'process-abandoned-carts-every-30-minutes': {
+        'task': 'orders.tasks.send_abandoned_cart_recovery_emails',
+        'schedule': 1800.0,  # Run every 30 minutes
+        'kwargs': {'hours_threshold': 2, 'dry_run': False},
+    },
+}
+
+# Transactional Email Configuration
+EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='support@modernstore.com')

@@ -229,3 +229,50 @@ class CartViewSet(viewsets.ViewSet):
 
         serializer = CartSerializer(user_cart, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post', 'get'], url_path='recover')
+    def recover(self, request):
+        """
+        POST/GET /api/orders/cart/recover/
+        Validates a cryptographically signed recovery token, resolves the abandoned cart,
+        and restores its contents for checkout resumption.
+        """
+        from django.core.signing import BadSignature, SignatureExpired
+        from .utils import verify_cart_recovery_token
+
+        token = (
+            request.data.get('token')
+            or request.query_params.get('token')
+        )
+
+        if not token:
+            raise ValidationError({"token": "Recovery token parameter is required."})
+
+        try:
+            payload = verify_cart_recovery_token(token)
+        except SignatureExpired:
+            raise ValidationError({"token": "This recovery link has expired. Please add items to a new cart."})
+        except BadSignature:
+            raise ValidationError({"token": "Invalid or tampered recovery token."})
+
+        cart_id = payload.get('cart_id')
+        try:
+            cart = Cart.objects.prefetch_related('items__product', 'items__variant').get(pk=cart_id)
+        except Cart.DoesNotExist:
+            raise NotFound({"cart": "The referenced cart was not found or has already been converted."})
+
+        if cart.is_empty:
+            raise ValidationError({"cart": "The referenced cart is empty."})
+
+        # If shopper is authenticated, merge recovered cart into active user cart
+        if request.user.is_authenticated:
+            if cart.user != request.user:
+                cart = cart.merge_with_user(request.user)
+
+        serializer = CartSerializer(cart, context={'request': request})
+        return Response({
+            "status": "recovered",
+            "message": "Cart successfully restored.",
+            "cart": serializer.data
+        }, status=status.HTTP_200_OK)
+

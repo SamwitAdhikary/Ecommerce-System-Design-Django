@@ -24,6 +24,18 @@ class CartAdmin(admin.ModelAdmin):
     search_fields = ['user__email', 'session_key']
     readonly_fields = ['get_subtotal', 'get_total_items', 'created_at', 'updated_at']
     inlines = [CartItemInline]
+    actions = ['send_recovery_email_action']
+
+    @admin.action(description="Dispatch recovery email to selected abandoned carts")
+    def send_recovery_email_action(self, request, queryset):
+        from .emails import send_abandoned_cart_email
+        dispatched = 0
+        for cart in queryset.filter(items__isnull=False, user__isnull=False):
+            if send_abandoned_cart_email(cart):
+                cart.abandoned_email_sent = True
+                cart.save(update_fields=['abandoned_email_sent'])
+                dispatched += 1
+        self.message_user(request, f"Successfully dispatched recovery emails to {dispatched} cart(s).")
 
     def get_owner(self, obj):
         if obj.user:
@@ -38,3 +50,4 @@ class CartAdmin(admin.ModelAdmin):
     def get_subtotal(self, obj):
         return f"₹{obj.subtotal:.2f}"
     get_subtotal.short_description = "Subtotal"
+
