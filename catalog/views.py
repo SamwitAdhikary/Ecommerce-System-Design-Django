@@ -378,10 +378,10 @@ class ActiveVisitorViewSet(viewsets.ViewSet):
         current_page = request.data.get('current_page', 'Shop')
         action_name = request.data.get('action', 'viewing')
 
-        # Extract client IP
+        # Extract client IP (take rightmost trusted hop from proxy chain)
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            ip_address = x_forwarded_for.split(',')[0].strip()
+            ip_address = x_forwarded_for.split(',')[-1].strip()
         else:
             ip_address = request.META.get('REMOTE_ADDR')
 
