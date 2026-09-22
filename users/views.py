@@ -174,22 +174,25 @@ class VerifyOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
             
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        if not user.otp_code or not user.otp_expires_at:
-            return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        if user.otp_code != str(otp_input).strip() or user.otp_expires_at < timezone.now():
-            return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Activate account and wipe OTP credentials to prevent replay
-        user.is_active = True
-        user.otp_code = None
-        user.otp_expires_at = None
-        user.save(update_fields=['is_active', 'otp_code', 'otp_expires_at'])
+        from django.db import transaction
+
+        with transaction.atomic():
+            try:
+                user = User.objects.select_for_update().get(email=email)
+            except User.DoesNotExist:
+                return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            if not user.otp_code or not user.otp_expires_at:
+                return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            if user.otp_code != str(otp_input).strip() or user.otp_expires_at < timezone.now():
+                return Response({'error': 'Invalid or expired OTP.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            # Activate account and wipe OTP credentials under row lock to prevent double-submit replay
+            user.is_active = True
+            user.otp_code = None
+            user.otp_expires_at = None
+            user.save(update_fields=['is_active', 'otp_code', 'otp_expires_at'])
         
         # Generate JWT tokens for instant login
         refresh = RefreshToken.for_user(user)

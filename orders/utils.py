@@ -7,14 +7,13 @@ DEFAULT_TOKEN_MAX_AGE = 604800  # 7 days in seconds
 
 def generate_cart_recovery_token(cart) -> str:
     """
-    Generates a cryptographically signed, timestamped token embedding the cart ID,
-    associated user ID, and customer email address.
+    Generates a cryptographically signed, timestamped token embedding the cart ID
+    and associated user ID. Excludes raw email to prevent PII leakage in URLs and logs.
     """
     signer = TimestampSigner(salt=RECOVERY_TOKEN_SALT)
     payload = {
         'cart_id': cart.id,
         'user_id': cart.user_id,
-        'email': cart.user.email if cart.user else None,
     }
     return signer.sign_object(payload)
 

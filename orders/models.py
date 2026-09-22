@@ -237,6 +237,10 @@ class CartItem(models.Model):
         return None
 
 
+import logging
+logger = logging.getLogger(__name__)
+
+
 @receiver(post_save, sender=CartItem)
 @receiver(post_delete, sender=CartItem)
 def reset_cart_abandoned_status(sender, instance, **kwargs):
@@ -246,8 +250,10 @@ def reset_cart_abandoned_status(sender, instance, **kwargs):
     """
     try:
         cart = instance.cart
-        if cart.abandoned_email_sent:
+        if cart and cart.abandoned_email_sent:
             cart.abandoned_email_sent = False
             cart.save(update_fields=['abandoned_email_sent', 'updated_at'])
-    except Exception:
+    except Cart.DoesNotExist:
         pass
+    except Exception as exc:
+        logger.error(f"Error resetting cart {getattr(instance, 'cart_id', None)} abandoned status: {exc}")
