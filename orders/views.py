@@ -102,7 +102,7 @@ class CartViewSet(viewsets.ViewSet):
             )
 
         with transaction.atomic():
-            cart_item = CartItem.objects.filter(
+            cart_item = CartItem.objects.select_for_update().filter(
                 cart=cart,
                 product=product,
                 variant=variant
@@ -123,8 +123,8 @@ class CartViewSet(viewsets.ViewSet):
                             quantity=max(1, clamped_quantity)
                         )
                 except IntegrityError:
-                    # Gracefully recover from double-click concurrency race: fetch and update existing row
-                    cart_item = CartItem.objects.get(
+                    # Gracefully recover from double-click concurrency race: fetch under lock and update existing row
+                    cart_item = CartItem.objects.select_for_update().get(
                         cart=cart,
                         product=product,
                         variant=variant
@@ -153,12 +153,12 @@ class CartViewSet(viewsets.ViewSet):
         except (ValueError, TypeError):
             raise ValidationError({"quantity": "A valid integer quantity is required."})
 
-        try:
-            cart_item = CartItem.objects.get(pk=item_id, cart=cart)
-        except CartItem.DoesNotExist:
-            raise NotFound({"detail": "Cart item not found in active cart."})
-
         with transaction.atomic():
+            try:
+                cart_item = CartItem.objects.select_for_update().get(pk=item_id, cart=cart)
+            except CartItem.DoesNotExist:
+                raise NotFound({"detail": "Cart item not found in active cart."})
+
             if quantity <= 0:
                 cart_item.delete()
             else:

@@ -350,14 +350,13 @@ class WishlistViewSet(viewsets.ModelViewSet):
         return Response({"status": "cleared", "total_items": 0})
 
 
-class ActiveVisitorViewSet(viewsets.ModelViewSet):
+class ActiveVisitorViewSet(viewsets.ViewSet):
     """
     Storefront active visitor telemetry viewset.
     Receives frontend heartbeats and returns live presence metrics.
+    Exposes dedicated heartbeat and stats actions without full ModelViewSet CRUD surface.
     """
-    serializer_class = ActiveVisitorSerializer
     permission_classes = [permissions.AllowAny]
-    queryset = ActiveVisitor.objects.all()
 
     @action(detail=False, methods=['post'], url_path='heartbeat')
     def heartbeat(self, request):

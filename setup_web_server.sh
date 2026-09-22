@@ -89,7 +89,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart gunicorn
 sudo systemctl enable gunicorn
 
-# 9. Configure Nginx Reverse Proxy with Header Sanitization
+# 9. Configure Nginx Reverse Proxy with Upstream Header Management
 echo "🌐 9. Configuring Nginx Reverse Proxy..."
 sudo tee /etc/nginx/sites-available/ecommerce > /dev/null <<EOF
 server {
