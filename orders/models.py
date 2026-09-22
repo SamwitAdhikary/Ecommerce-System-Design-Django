@@ -254,6 +254,10 @@ def reset_cart_abandoned_status(sender, instance, **kwargs):
             cart.abandoned_email_sent = False
             cart.save(update_fields=['abandoned_email_sent', 'updated_at'])
     except Cart.DoesNotExist:
+        # Parent cart was already deleted (CASCADE ordering) — nothing to reset.
         pass
-    except Exception as exc:
-        logger.error(f"Error resetting cart {getattr(instance, 'cart_id', None)} abandoned status: {exc}")
+    except Exception:
+        logger.exception(
+            "Unexpected error resetting abandoned_email_sent for cart item %s",
+            instance.pk
+        )
