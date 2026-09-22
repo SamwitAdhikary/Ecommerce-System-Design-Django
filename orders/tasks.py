@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from celery import shared_task
 from django.utils import timezone
@@ -5,6 +6,8 @@ from django.db import transaction
 
 from .models import Cart
 from .emails import send_abandoned_cart_email
+
+logger = logging.getLogger(__name__)
 
 
 @shared_task(name='orders.tasks.send_abandoned_cart_recovery_emails')
@@ -58,7 +61,8 @@ def send_abandoned_cart_recovery_emails(hours_threshold: int = 2, dry_run: bool 
         except Cart.DoesNotExist:
             continue
         except Exception:
-            # In production, revert flag on error to allow future retry
+            # In production, log diagnostic traceback and revert flag on error to allow future retry
+            logger.exception("Unexpected error processing abandoned cart recovery for cart %s", cart_id)
             Cart.objects.filter(id=cart_id).update(abandoned_email_sent=False)
             continue
 
@@ -91,5 +95,6 @@ def dispatch_single_cart_recovery_email(cart_id: int) -> bool:
     except Cart.DoesNotExist:
         return False
     except Exception:
+        logger.exception("Unexpected error in single cart recovery task for cart %s", cart_id)
         Cart.objects.filter(id=cart_id).update(abandoned_email_sent=False)
         return False
